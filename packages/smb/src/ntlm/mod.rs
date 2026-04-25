@@ -24,6 +24,7 @@ impl<T> Secret<T> {
         Self(value)
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn as_ref(&self) -> &T {
         &self.0
     }
