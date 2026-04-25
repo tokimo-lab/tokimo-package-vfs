@@ -1,0 +1,52 @@
+[package]
+name = "tokimo-vfs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio       = { version = "1", features = ["full"] }
+serde_json  = "1"
+tokimo-vfs-core  = { path = "../core" }
+tokimo-vfs-op    = { path = "../op" }
+base64      = "0.22"
+md-5        = "0.10"
+sha1        = "0.10"
+mime_guess  = "2"
+reqwest     = { version = "0.13", features = ["cookies", "form", "json", "query", "stream"] }
+rand_core   = "0.6"
+num-bigint  = "0.4"
+smb         = { package = "tokimo-vfs-smb", path = "../smb", default-features = false, features = ["async", "sign_hmac", "netbios-transport"] }
+smb-fscc    = "0.11.1"
+futures-util = "0.3"
+russh       = "0.60"
+russh-sftp  = "2"
+nfs3_client = { version = "0.8", features = ["tokio"] }
+nfs4_client = { git = "https://github.com/bobbobbio/nfs4", rev = "cea206b78a6dd758ce991c53b606a7d2b8cc10d4", package = "nfs4_client" }
+nfs4        = { git = "https://github.com/bobbobbio/nfs4", rev = "cea206b78a6dd758ce991c53b606a7d2b8cc10d4", package = "nfs4" }
+socket2     = { version = "0.6", features = ["all"] }
+inventory   = "0.3"
+async-trait = "0.1"
+chrono      = { version = "0.4", features = ["serde"] }
+serde       = { version = "1", features = ["derive"] }
+clap        = { version = "4", features = ["derive"] }
+tracing     = "0.1"
+rust-s3     = { version = "0.37.1", default-features = false, features = ["tokio-rustls-tls"] }
+reqwest_dav = "0.3"
+urlencoding = "2"
+suppaftp    = { version = "8", features = ["tokio", "tokio-async-native-tls"] }
+rsa         = { version = "0.9", features = ["pem"] }
+aes         = "0.8"
+hmac        = "0.12"
+hex         = "0.4"
+bytes       = "1"
+
+[[bin]]
+name = "smb_bench"
+path = "src/bin/smb_bench.rs"
+
+[dev-dependencies]
+anyhow             = "1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[lints]
+workspace = true
