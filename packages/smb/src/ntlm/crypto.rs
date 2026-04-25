@@ -99,4 +99,58 @@ mod tests {
             [0xd4, 0x1d, 0x8c, 0xd9, 0x8f, 0x00, 0xb2, 0x04, 0xe9, 0x80, 0x09, 0x98, 0xec, 0xf8, 0x42, 0x7e]
         );
     }
+
+    /// RFC 1320 MD4 test: MD4("abc") = a448017aaf21d8525fc10ae87aa6729d.
+    #[test]
+    fn md4_abc() {
+        assert_eq!(
+            md4(b"abc"),
+            [0xa4, 0x48, 0x01, 0x7a, 0xaf, 0x21, 0xd8, 0x52, 0x5f, 0xc1, 0x0a, 0xe8, 0x7a, 0xa6, 0x72, 0x9d]
+        );
+    }
+
+    /// RFC 2202 §2 test case 1: HMAC-MD5(key=0x0b×16, "Hi There")
+    /// = 9294727a3638bb1c13f48ef8158bfc9d.
+    #[test]
+    fn hmac_md5_rfc2202_case1() {
+        let key = [0x0b; 16];
+        assert_eq!(
+            hmac_md5(&key, b"Hi There"),
+            [0x92, 0x94, 0x72, 0x7a, 0x36, 0x38, 0xbb, 0x1c, 0x13, 0xf4, 0x8e, 0xf8, 0x15, 0x8b, 0xfc, 0x9d]
+        );
+    }
+
+    /// `hmac_md5_concat(k, a, b)` must match `hmac_md5(k, a || b)`.
+    #[test]
+    fn hmac_md5_concat_matches_singleshot() {
+        let key = b"the-key-doesnt-have-to-be-16b";
+        let a = b"hello, ";
+        let b = b"world!";
+        let mut combined = Vec::new();
+        combined.extend_from_slice(a);
+        combined.extend_from_slice(b);
+        assert_eq!(hmac_md5_concat(key, a, b), hmac_md5(key, &combined));
+    }
+
+    /// RC4 is its own inverse: encrypting then decrypting must round-trip.
+    #[test]
+    fn rc4_round_trip() {
+        let key = b"NTLMv2-session-key-16b";
+        let plain = b"AUTHENTICATE_MESSAGE keyexchange payload";
+        let mut buf = plain.to_vec();
+        rc4(key, &mut buf);
+        assert_ne!(&buf[..], &plain[..], "RC4 should mutate the buffer");
+        rc4(key, &mut buf);
+        assert_eq!(&buf[..], &plain[..]);
+    }
+
+    #[test]
+    fn utf16_le_basic() {
+        assert_eq!(utf16_le("Hi"), vec![b'H', 0, b'i', 0]);
+    }
+
+    #[test]
+    fn utf16_le_upper_lowercases_input() {
+        assert_eq!(utf16_le_upper("user"), utf16_le("USER"));
+    }
 }

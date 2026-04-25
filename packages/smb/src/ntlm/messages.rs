@@ -426,4 +426,69 @@ mod tests {
             "LMv2 hash mismatch with [MS-NLMP] 4.2.4.2.1"
         );
     }
+
+    /// `build_negotiate` must produce a 40-byte Type 1 message with the
+    /// "NTLMSSP\0" signature and msg_type=1 in little-endian.
+    #[test]
+    fn build_negotiate_header_shape() {
+        let buf = super::build_negotiate("WS", None);
+        assert_eq!(buf.len(), 40);
+        assert_eq!(&buf[0..8], super::NTLMSSP_SIGNATURE);
+        assert_eq!(u32::from_le_bytes(buf[8..12].try_into().unwrap()), 1);
+    }
+
+    /// `parse_challenge` must round-trip the server challenge, flags, and
+    /// the TargetInfo blob from a synthetic Type 2 message.
+    #[test]
+    fn parse_challenge_round_trip() {
+        let server_challenge: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
+        let flags: u32 = 0x6282_8215;
+        let target_info: Vec<u8> = vec![
+            0x02, 0x00, 0x0c, 0x00,
+            b'D', 0, b'o', 0, b'm', 0, b'a', 0, b'i', 0, b'n', 0,
+            0x00, 0x00, 0x00, 0x00,
+        ];
+
+        let header_size: u32 = 56;
+        let ti_off = header_size;
+        let ti_len = target_info.len() as u16;
+
+        let mut buf = Vec::new();
+        buf.extend_from_slice(super::NTLMSSP_SIGNATURE);
+        buf.extend_from_slice(&super::MSG_TYPE_CHALLENGE.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&0u16.to_le_bytes());
+        buf.extend_from_slice(&header_size.to_le_bytes());
+        buf.extend_from_slice(&flags.to_le_bytes());
+        buf.extend_from_slice(&server_challenge);
+        buf.extend_from_slice(&[0u8; 8]);
+        buf.extend_from_slice(&ti_len.to_le_bytes());
+        buf.extend_from_slice(&ti_len.to_le_bytes());
+        buf.extend_from_slice(&ti_off.to_le_bytes());
+        buf.extend_from_slice(&[10, 0, 0x61, 0x4a, 0, 0, 0, 0x0f]);
+        assert_eq!(buf.len() as u32, header_size);
+        buf.extend_from_slice(&target_info);
+
+        let parsed = super::parse_challenge(&buf).expect("parse_challenge");
+        assert_eq!(parsed.server_challenge, server_challenge);
+        assert_eq!(parsed.negotiate_flags, flags);
+        assert_eq!(parsed.target_info, target_info);
+    }
+
+    /// A truncated buffer must surface as an `InvalidState` error rather than
+    /// panicking via slice indexing.
+    #[test]
+    fn parse_challenge_rejects_truncated() {
+        let res = super::parse_challenge(&[0u8; 8]);
+        assert!(res.is_err());
+    }
+
+    /// A buffer with the wrong signature must be rejected.
+    #[test]
+    fn parse_challenge_rejects_bad_signature() {
+        let mut buf = vec![0u8; 56];
+        buf[0..8].copy_from_slice(b"BOGUS\0\0\0");
+        let res = super::parse_challenge(&buf);
+        assert!(res.is_err());
+    }
 }

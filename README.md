@@ -1,34 +1,104 @@
 # tokimo-package-vfs
 
-Unified async virtual filesystem layer for [Tokimo](https://github.com/tokimo-lab/tokimo) — a single `Driver` trait that fronts Local, SFTP, FTP, SMB, S3, NFS, WebDAV, and more, plus a [stream-oriented op layer](./packages/op) for media-friendly large-file operations (range reads, parallel chunks, byte-range copies).
+Unified async virtual filesystem (VFS) layer for [Tokimo](https://github.com/tokimo-lab/tokimo).
 
-## Crates
+A single `Driver` trait fronts local disk, network shares, cloud object storage,
+and a handful of consumer cloud drives, plus a stream-oriented op layer for
+media-friendly large-file workflows (range reads, parallel chunk download,
+byte-range copy, walking, watching).
 
-| Crate | Description |
+## Workspace crates
+
+| Crate | Purpose |
 | --- | --- |
-| [`tokimo-vfs-core`](./packages/core) | `Driver` / `FileMeta` / `FileChange` traits and shared types |
-| [`tokimo-vfs`](./packages/fs) | Driver implementations (Local, SFTP, FTP, SMB, S3, NFS, WebDAV, …) |
+| [`tokimo-vfs-core`](./packages/core) | `Driver` / `FileMeta` / `FileChange` traits, errors, capability flags |
+| [`tokimo-vfs`](./packages/fs) | All driver implementations (see matrix below) |
 | [`tokimo-vfs-op`](./packages/op) | High-level op layer — range reads, parallel copy, walker, file-watch helpers |
 | [`tokimo-vfs-smb`](./packages/smb) | Vendored fork of [smb-rs](https://github.com/avivg/smb-rs) with a handwritten NTLMv2 implementation in place of `sspi` |
 
-## SMB — Why a custom fork
+## Supported storage backends
 
-The upstream `smb-rs` crate depends on `sspi` (and transitively the entire `picky-*` ASN.1 stack) for NTLM/Kerberos/SPNEGO authentication. For Tokimo we only need pure NTLMv2 over the wire — no SPNEGO wrapper, no Kerberos. Carrying ~50k lines of cryptographic glue for one HMAC-MD5 chain was not a tradeoff we wanted.
+The `Driver` trait splits I/O capability by intent. Listing and reading are
+mandatory; everything else is opt-in via `Driver::as_<capability>()` downcasts.
+The matrix below records what each driver actually wires up today.
 
-`packages/smb/src/ntlm/` contains a from-scratch NTLMv2 client (~500 LoC) that:
+Legend: ✅ = implemented · ⚪ = not supported (or upstream API does not expose it)
+
+### Local & network filesystems
+
+| Backend | Driver name | List | Read | Mkdir | Delete file | Delete dir | Rename | Move | Copy | Put | Put stream | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Local disk | `local` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Native paths, `resolve_local` short-circuits to OS file ops |
+| SFTP | `sftp` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ✅ | ✅ | OpenSSH-compatible, via `russh` |
+| FTP | `ftp` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ✅ | ✅ | Plain FTP / FTPS |
+| SMB / CIFS | `smb` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ✅ | ✅ | SMB2/3 with handwritten NTLMv2 (see below) |
+| NFS | `nfs` | ✅ | ✅ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | NFSv3 read-only (mount-style enumeration) |
+| WebDAV | `webdav` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | Basic / Digest auth |
+
+### Object storage
+
+| Backend | Driver name | List | Read | Delete file | Put | Put stream | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| S3-compatible | `s3` | ✅ | ✅ | ✅ | ✅ | ✅ | AWS S3 / MinIO / R2 / OSS-S3 / B2-S3 — anything speaking the S3 wire |
+
+### Consumer cloud drives
+
+| Backend | Driver name | List | Read | Mkdir | Delete file | Delete dir | Rename | Move | Copy | Put | Put stream | Notes |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 阿里云盘 (Aliyun Drive) | `aliyundrive` | ✅ | ✅ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | Read-only (refresh-token auth, share & STS modes) |
+| 百度网盘 (Baidu Netdisk) | `baidu_netdisk` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ⚪ | OAuth via 百度开放平台 |
+| 天翼云盘 (189 Cloud) | `189cloud` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ✅ | Username + password login |
+| 115 网盘 (115 Cloud) | `115cloud` | ✅ | ✅ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | Cookie auth, read-only |
+| 夸克网盘 (Quark) | `quark` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ⚪ | ✅ | ✅ | Cookie auth |
+
+If a driver row shows `⚪` for write operations, calling the corresponding
+helper on the `Driver` trait returns `Err(unsupported(...))` rather than
+silently failing — callers can probe support upfront via
+`driver.as_put().is_some()` etc.
+
+## Op layer (`tokimo-vfs-op`)
+
+Built on top of any `Driver`:
+
+- `read_range` / `read_chunked` — stream byte ranges as `mpsc::Receiver<Vec<u8>>`
+- `parallel_copy` — multi-connection chunked copy for fast remote-to-local transfer
+- `walk` — async tree walker with prune callbacks (used by media library scanners)
+- `file_watch` — best-effort change notification (polling fallback for drivers that lack native events)
+
+These wrappers are how Tokimo's media services treat all backends uniformly,
+including doing 10-stream parallel pulls from S3 / SMB / SFTP for thumbnails.
+
+## SMB — why the custom fork
+
+Upstream `smb-rs` depends on `sspi` (and transitively the entire `picky-*`
+ASN.1 stack) to drive NTLM / Kerberos / SPNEGO authentication. Tokimo only
+needs raw NTLMv2 over the wire — no SPNEGO wrapper, no Kerberos, no DER
+parsing. Carrying ~50k lines of cryptographic glue for one HMAC-MD5 chain was
+not a tradeoff we wanted.
+
+`packages/smb/src/ntlm/` ships a from-scratch NTLMv2 client (~500 LoC) that:
 
 - Computes `NTOWFv2` / `NtProofStr` / `LMv2Response` / `SessionBaseKey` per [MS-NLMP] §3.3.2
-- Generates Type 1 / parses Type 2 / builds Type 3 NTLMSSP messages directly over the SMB2 SessionSetup wire
-- Encrypts the random `ExportedSessionKey` with `RC4(KeyExchangeKey)` (RFC 6229)
-- Is verified against the official [MS-NLMP] §4.2.4 test vectors (NTOWFv2, NtProofStr, SessionBaseKey, LMv2)
+- Generates Type 1, parses Type 2, builds Type 3 NTLMSSP messages directly inside SMB2 SessionSetup
+- Encrypts a random `ExportedSessionKey` with `RC4(KeyExchangeKey)` (RFC 6229) for key exchange
+- Is verified against the official [MS-NLMP] §4.2.4 test vectors (`NTOWFv2`, `NtProofStr`, `SessionBaseKey`, `LMv2Response`)
 
-After this rewrite the crate compiles with only `md4`, `md-5`, `hmac`, and `rand` for crypto — all `sspi` and `picky-*` dependencies are gone.
+After the rewrite the crate's only crypto dependencies are `md4`, `md-5`,
+`hmac`, and `rand`. All `sspi` and `picky-*` crates are gone.
 
-## Building
+## Building & testing
 
 ```bash
 cargo build --workspace
 cargo test  --workspace
+```
+
+The NTLMv2 unit tests live under `packages/smb/src/ntlm/{crypto,messages}.rs`
+and cover both RFC primitives (MD4, MD5, HMAC-MD5, RC4) and the [MS-NLMP]
+authentication chain end-to-end:
+
+```bash
+cargo test -p tokimo-vfs-smb --lib ntlm::
 ```
 
 A SMB smoke-test binary lives at `packages/fs/src/bin/smb_test.rs`:
@@ -40,4 +110,5 @@ SMB_HOST=10.0.0.10 SMB_SHARE=media SMB_USER=william SMB_PASS='secret' \
 
 ## License
 
-MIT — see individual crates for upstream attribution where applicable (smb-rs is MIT licensed).
+MIT. Individual vendored components retain upstream attribution where required
+(see `packages/smb` for the `smb-rs` MIT notice).
