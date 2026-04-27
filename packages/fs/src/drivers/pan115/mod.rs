@@ -24,7 +24,7 @@ use tracing::{debug, error};
 
 use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{Driver, Meta, Reader};
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::{FileInfo, Link};
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 use types::{
@@ -285,9 +285,9 @@ impl Reader for Pan115Driver {
                     path.display()
                 )));
             }
-            let pick_code = entry
-                .pick_code
-                .ok_or_else(|| TokimoVfsError::Other(format!("pan115 file is missing pick_code: {}", path.display())))?;
+            let pick_code = entry.pick_code.ok_or_else(|| {
+                TokimoVfsError::Other(format!("pan115 file is missing pick_code: {}", path.display()))
+            })?;
 
             let (url, cdn_cookie) = self.fetch_download_url_with_cookie(&pick_code).await?;
 

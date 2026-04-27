@@ -20,9 +20,6 @@ use std::{collections::BTreeMap, pin::Pin};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use tokimo_vfs_core::driver::traits::{
-    DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutFile, PutStream, Reader, Rename,
-};
 use smb::connection::EncryptionMode;
 use smb::resource::Directory;
 use smb::{
@@ -30,11 +27,14 @@ use smb::{
     FileAllInformation, FileCreateArgs, FileIdBothDirectoryInformation, FileStandardInformation, Resource, UncPath,
 };
 use smb_fscc::{FileAttributes, FileDispositionInformation, FileRenameInformation};
+use tokimo_vfs_core::driver::traits::{
+    DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutFile, PutStream, Reader, Rename,
+};
 use tokio::sync::mpsc::Sender;
 use tracing::{error, info, warn};
 
 use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::FileInfo;
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 
@@ -157,7 +157,13 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
     let root_path = normalize_root(params["root"].as_str().unwrap_or("/"));
 
     if share.is_empty() || share == "*" {
-        return Ok(Box::new(SmbMultiShareDriver::new(host, username, password, domain, ShareMode::EnumerateAll)));
+        return Ok(Box::new(SmbMultiShareDriver::new(
+            host,
+            username,
+            password,
+            domain,
+            ShareMode::EnumerateAll,
+        )));
     }
 
     // Comma-separated share names → multi-share driver
@@ -168,14 +174,26 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
             .filter(|s| !s.is_empty())
             .collect();
         if names.is_empty() {
-            return Ok(Box::new(SmbMultiShareDriver::new(host, username, password, domain, ShareMode::EnumerateAll)));
+            return Ok(Box::new(SmbMultiShareDriver::new(
+                host,
+                username,
+                password,
+                domain,
+                ShareMode::EnumerateAll,
+            )));
         }
 
         let has_wildcard = names.iter().any(|n| n == "*");
         if has_wildcard {
             // "*, hidden$, admin$" → enumerate all + extra manual entries
             let extras: Vec<String> = names.into_iter().filter(|n| n != "*").collect();
-            return Ok(Box::new(SmbMultiShareDriver::new(host, username, password, domain, ShareMode::EnumeratePlusExtra(extras))));
+            return Ok(Box::new(SmbMultiShareDriver::new(
+                host,
+                username,
+                password,
+                domain,
+                ShareMode::EnumeratePlusExtra(extras),
+            )));
         }
 
         if names.len() == 1 {
@@ -206,7 +224,13 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
                 read_usage: Arc::new(Mutex::new(SmbReadUsage::default())),
             }));
         }
-        return Ok(Box::new(SmbMultiShareDriver::new(host, username, password, domain, ShareMode::Explicit(names))));
+        return Ok(Box::new(SmbMultiShareDriver::new(
+            host,
+            username,
+            password,
+            domain,
+            ShareMode::Explicit(names),
+        )));
     }
 
     let p = SmbParams {
@@ -366,7 +390,9 @@ fn classify_nt_status(status: u32, context: &str, err: &smb::Error) -> TokimoVfs
     let msg = format!("smb {context}: {err}");
     match status {
         // Not-found — the path/name simply doesn't exist; never retry.
-        smb::Status::U32_OBJECT_NAME_NOT_FOUND | smb::Status::U32_OBJECT_PATH_NOT_FOUND => TokimoVfsError::NotFound(msg),
+        smb::Status::U32_OBJECT_NAME_NOT_FOUND | smb::Status::U32_OBJECT_PATH_NOT_FOUND => {
+            TokimoVfsError::NotFound(msg)
+        }
         // Session/connection torn down by the server — worth a reconnect.
         smb::Status::U32_NETWORK_NAME_DELETED
         | smb::Status::U32_NETWORK_SESSION_EXPIRED
@@ -1088,8 +1114,8 @@ impl Meta for NativeSmbDriver {
 
         let params = self.params.clone();
         let unc_str = format!(r"\\{}\{}", params.host, params.share);
-        let base_unc =
-            UncPath::from_str(&unc_str).map_err(|e| TokimoVfsError::InvalidConfig(format!("非法 SMB UNC 路径: {e}")))?;
+        let base_unc = UncPath::from_str(&unc_str)
+            .map_err(|e| TokimoVfsError::InvalidConfig(format!("非法 SMB UNC 路径: {e}")))?;
 
         let user_name = if params.username.is_empty() {
             current_username().unwrap_or_else(|| "guest".to_string())
@@ -1571,9 +1597,7 @@ impl SmbMultiShareDriver {
         if let ShareMode::Explicit(ref allowed) = self.mode
             && !allowed.iter().any(|a| a.eq_ignore_ascii_case(share))
         {
-            return Err(TokimoVfsError::NotFound(format!(
-                "共享 '{share}' 不在允许列表中"
-            )));
+            return Err(TokimoVfsError::NotFound(format!("共享 '{share}' 不在允许列表中")));
         }
 
         // Fast path
@@ -1639,18 +1663,12 @@ impl SmbMultiShareDriver {
         };
 
         match &self.mode {
-            ShareMode::Explicit(names) => {
-                Ok(names.iter().map(|n| make_entry(n.clone())).collect())
-            }
-            ShareMode::EnumerateAll => {
-                self.enumerate_shares_via_ipc().await
-            }
+            ShareMode::Explicit(names) => Ok(names.iter().map(|n| make_entry(n.clone())).collect()),
+            ShareMode::EnumerateAll => self.enumerate_shares_via_ipc().await,
             ShareMode::EnumeratePlusExtra(extras) => {
                 let mut shares = self.enumerate_shares_via_ipc().await?;
-                let existing: std::collections::HashSet<String> = shares
-                    .iter()
-                    .map(|f| f.name.to_ascii_lowercase())
-                    .collect();
+                let existing: std::collections::HashSet<String> =
+                    shares.iter().map(|f| f.name.to_ascii_lowercase()).collect();
                 for extra in extras {
                     if !existing.contains(&extra.to_ascii_lowercase()) {
                         shares.push(make_entry(extra.clone()));
@@ -1742,7 +1760,7 @@ impl SmbMultiShareDriver {
 mod ndr32_srvsvc {
     use smb::{IoctlBuffer, Pipe, PipeTransceiveRequest};
 
-    use super::{TokimoVfsError, Result};
+    use super::{Result, TokimoVfsError};
 
     // ---- Constants ----
 

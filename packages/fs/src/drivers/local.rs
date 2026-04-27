@@ -10,7 +10,7 @@ use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{
     CopyFile, DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutFile, PutStream, Reader, Rename, ResolveLocal,
 };
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::FileInfo;
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 use tokio::fs;

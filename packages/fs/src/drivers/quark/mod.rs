@@ -25,7 +25,7 @@ use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{
     ConfigPersister, DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutFile, PutStream, Reader, Rename,
 };
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::{FileInfo, Link};
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 use types::{
@@ -803,8 +803,8 @@ impl QuarkDriver {
         };
 
         let callback_base64 = if let Some(cb) = &pre.callback {
-            let cb_json =
-                serde_json::to_string(cb).map_err(|e| TokimoVfsError::Other(format!("quark serialize callback: {e}")))?;
+            let cb_json = serde_json::to_string(cb)
+                .map_err(|e| TokimoVfsError::Other(format!("quark serialize callback: {e}")))?;
             base64::engine::general_purpose::STANDARD.encode(cb_json.as_bytes())
         } else {
             String::new()

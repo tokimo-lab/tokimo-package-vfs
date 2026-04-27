@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 use tokimo_vfs_core::driver::traits::Driver;
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::{FileInfo, Link};
 use tokimo_vfs_core::model::storage::{StorageCapabilities, StorageStatus};
 

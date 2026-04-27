@@ -16,7 +16,7 @@ use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{
     ConfigPersister, CopyFile, DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, Reader, Rename,
 };
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::{FileInfo, Link};
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 use types::{
@@ -321,31 +321,32 @@ impl BaiduNetdiskDriver {
 
     /// Perform the actual HTTP token refresh without any caching logic.
     async fn do_refresh_token(&self, refresh_token: &str) -> Result<TokenResponse> {
-        let response =
-            if let (Some(client_id), Some(client_secret)) = (&self.params.client_id, &self.params.client_secret) {
-                self.client
-                    .get(OFFICIAL_TOKEN_URL)
-                    .query(&[
-                        ("grant_type", "refresh_token"),
-                        ("refresh_token", refresh_token),
-                        ("client_id", client_id.as_str()),
-                        ("client_secret", client_secret.as_str()),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|err| TokimoVfsError::ConnectionError(format!("baidu token refresh failed: {err}")))?
-            } else {
-                self.client
-                    .get(ONLINE_TOKEN_URL)
-                    .query(&[
-                        ("refresh_ui", refresh_token),
-                        ("server_use", "true"),
-                        ("driver_txt", "baiduyun_go"),
-                    ])
-                    .send()
-                    .await
-                    .map_err(|err| TokimoVfsError::ConnectionError(format!("baidu online token refresh failed: {err}")))?
-            };
+        let response = if let (Some(client_id), Some(client_secret)) =
+            (&self.params.client_id, &self.params.client_secret)
+        {
+            self.client
+                .get(OFFICIAL_TOKEN_URL)
+                .query(&[
+                    ("grant_type", "refresh_token"),
+                    ("refresh_token", refresh_token),
+                    ("client_id", client_id.as_str()),
+                    ("client_secret", client_secret.as_str()),
+                ])
+                .send()
+                .await
+                .map_err(|err| TokimoVfsError::ConnectionError(format!("baidu token refresh failed: {err}")))?
+        } else {
+            self.client
+                .get(ONLINE_TOKEN_URL)
+                .query(&[
+                    ("refresh_ui", refresh_token),
+                    ("server_use", "true"),
+                    ("driver_txt", "baiduyun_go"),
+                ])
+                .send()
+                .await
+                .map_err(|err| TokimoVfsError::ConnectionError(format!("baidu online token refresh failed: {err}")))?
+        };
 
         // Read the body before checking the status so we can surface the
         // exact Baidu error (e.g. "invalid_grant") rather than just HTTP 400.

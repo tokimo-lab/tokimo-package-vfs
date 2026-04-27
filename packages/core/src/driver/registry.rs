@@ -1,6 +1,6 @@
 use crate::driver::config::DriverFactory;
 use crate::driver::traits::Driver;
-use crate::error::{TokimoVfsError, Result};
+use crate::error::{Result, TokimoVfsError};
 
 /// 全局驱动注册表。
 ///
@@ -18,7 +18,9 @@ impl DriverRegistry {
     pub fn create(&self, name: &str, params: &serde_json::Value) -> Result<Box<dyn Driver>> {
         inventory::iter::<DriverFactory>()
             .find(|f| f.config.name == name)
-            .ok_or_else(|| TokimoVfsError::DriverNotFound(format!("未知驱动 '{}'; 已注册：{:?}", name, self.registered())))
+            .ok_or_else(|| {
+                TokimoVfsError::DriverNotFound(format!("未知驱动 '{}'; 已注册：{:?}", name, self.registered()))
+            })
             .and_then(|f| (f.create)(params))
     }
 

@@ -37,9 +37,7 @@ impl Authenticator {
     }
 
     pub fn session_key(&self) -> crate::Result<[u8; 16]> {
-        self.ntlm
-            .session_key()
-            .map_err(|e| Error::NtlmError(e.to_string()))
+        self.ntlm.session_key().map_err(|e| Error::NtlmError(e.to_string()))
     }
 
     #[maybe_async]
@@ -47,11 +45,9 @@ impl Authenticator {
         if self.ntlm.is_complete() {
             return Err(Error::InvalidState("Authentication already done.".into()));
         }
-        self.ntlm
-            .next(gss_token)
-            .map_err(|e| match e {
-                Error::NtlmError(_) | Error::InvalidState(_) => e,
-                other => Error::NtlmError(other.to_string()),
-            })
+        self.ntlm.next(gss_token).map_err(|e| match e {
+            Error::NtlmError(_) | Error::InvalidState(_) => e,
+            other => Error::NtlmError(other.to_string()),
+        })
     }
 }

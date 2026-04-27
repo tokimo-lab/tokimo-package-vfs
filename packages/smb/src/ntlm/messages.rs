@@ -6,8 +6,8 @@ use rand::RngCore;
 
 use crate::Error;
 
-use super::crypto::{hmac_md5, hmac_md5_concat, md4, rc4, utf16_le, utf16_le_upper};
 use super::AuthIdentity;
+use super::crypto::{hmac_md5, hmac_md5_concat, md4, rc4, utf16_le, utf16_le_upper};
 
 /// "NTLMSSP\0" signature.
 const NTLMSSP_SIGNATURE: &[u8; 8] = b"NTLMSSP\0";
@@ -444,9 +444,7 @@ mod tests {
         let server_challenge: [u8; 8] = [0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef];
         let flags: u32 = 0x6282_8215;
         let target_info: Vec<u8> = vec![
-            0x02, 0x00, 0x0c, 0x00,
-            b'D', 0, b'o', 0, b'm', 0, b'a', 0, b'i', 0, b'n', 0,
-            0x00, 0x00, 0x00, 0x00,
+            0x02, 0x00, 0x0c, 0x00, b'D', 0, b'o', 0, b'm', 0, b'a', 0, b'i', 0, b'n', 0, 0x00, 0x00, 0x00, 0x00,
         ];
 
         let header_size: u32 = 56;

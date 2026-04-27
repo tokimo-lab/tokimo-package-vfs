@@ -1,11 +1,11 @@
 use crate::ConnectionConfig;
+use crate::ntlm::{AuthIdentity, Secret};
 use crate::{Connection, Error, FileCreateArgs, Pipe, Resource, Session, Tree, sync_helpers::*};
 use maybe_async::maybe_async;
 use smb_msg::{NetworkInterfaceInfo, ReferralEntry, ReferralEntryValue, Status};
 use smb_rpc::interface::{ShareInfo1, SrvSvc};
 use smb_transport::TransportConfig;
 use smb_transport::utils::TransportUtils;
-use crate::ntlm::{AuthIdentity, Secret};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use std::{collections::HashMap, str::FromStr};

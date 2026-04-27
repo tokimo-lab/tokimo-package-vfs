@@ -7,8 +7,8 @@ pub mod drivers; // local、smb（可按需扩展）
 // ------- 常用再导出 -------
 pub use tokimo_vfs_core::{
     ConfigPersister, ConnectionState, CopyFile, DeleteDir, DeleteFile, Driver, DriverConfig, DriverFactory,
-    DriverRegistry, FileInfo, Link, Meta, Mkdir, MoveFile, TokimoVfsError, PutFile, PutStream, ReadAt, Reader, Rename,
-    Result, StorageCapabilities, StorageStatus,
+    DriverRegistry, FileInfo, Link, Meta, Mkdir, MoveFile, PutFile, PutStream, ReadAt, Reader, Rename, Result,
+    StorageCapabilities, StorageStatus, TokimoVfsError,
 };
 pub use tokimo_vfs_op::{StorageManager, StorageMount};
 pub use vfs::Vfs;

@@ -28,7 +28,12 @@ async fn main() -> Result<(), BoxError> {
     let entries = driver.list(Path::new("/")).await?;
     println!("✅ connected. {} entries:", entries.len());
     for e in entries.iter().take(20) {
-        println!("  {} {} {} bytes", if e.is_dir { "DIR " } else { "FILE" }, e.name, e.size);
+        println!(
+            "  {} {} {} bytes",
+            if e.is_dir { "DIR " } else { "FILE" },
+            e.name,
+            e.size
+        );
     }
     Ok(())
 }

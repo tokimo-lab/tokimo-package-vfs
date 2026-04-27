@@ -63,7 +63,11 @@ impl Connection {
     /// for the specified existing, primary connection.
     ///
     /// Returns the ID of the channel in the existing session.
-    pub async fn bind_session(&self, primary_session: &Session, identity: crate::ntlm::AuthIdentity) -> crate::Result<u32> {
+    pub async fn bind_session(
+        &self,
+        primary_session: &Session,
+        identity: crate::ntlm::AuthIdentity,
+    ) -> crate::Result<u32> {
         tracing::debug!("Binding alternate session to new connection");
 
         if self.conn_info().is_none() {

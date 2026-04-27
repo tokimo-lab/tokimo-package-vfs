@@ -14,9 +14,9 @@
 use std::time::Instant;
 
 use clap::Parser;
+use std::path::Path;
 use tokimo_vfs::Reader;
 use tokimo_vfs::drivers::smb::factory as smb_factory;
-use std::path::Path;
 
 type BoxError = Box<dyn std::error::Error + Send + Sync>;
 

@@ -23,7 +23,7 @@ use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{
     CopyFile, DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutStream, Reader, Rename,
 };
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 use tokimo_vfs_core::model::obj::{FileInfo, Link};
 use tokimo_vfs_core::model::storage::{ConnectionState, StorageCapabilities, StorageStatus};
 
@@ -307,7 +307,9 @@ impl Cloud189Driver {
             .map_err(|e| TokimoVfsError::Other(format!("cloud189 encryptConf parse: {e}")))?;
 
         if enc_conf.result != 0 {
-            return Err(TokimoVfsError::ConnectionError("cloud189: encryptConf failed".to_string()));
+            return Err(TokimoVfsError::ConnectionError(
+                "cloud189: encryptConf failed".to_string(),
+            ));
         }
 
         let pre = &enc_conf.data.pre;
@@ -365,7 +367,9 @@ impl Cloud189Driver {
             } else {
                 msg.to_string()
             };
-            return Err(TokimoVfsError::ConnectionError(format!("cloud189 login failed: {detail}")));
+            return Err(TokimoVfsError::ConnectionError(format!(
+                "cloud189 login failed: {detail}"
+            )));
         }
 
         // Step 5: Follow toUrl to exchange the login ticket for a cloud.189.cn session cookie.
@@ -466,8 +470,8 @@ impl Cloud189Driver {
                 )
                 .await?;
 
-            let resp: FilesResp =
-                serde_json::from_slice(&body).map_err(|e| TokimoVfsError::Other(format!("cloud189 list parse: {e}")))?;
+            let resp: FilesResp = serde_json::from_slice(&body)
+                .map_err(|e| TokimoVfsError::Other(format!("cloud189 list parse: {e}")))?;
 
             if resp.res_code != 0 {
                 return Err(TokimoVfsError::Other(format!("cloud189 list: {}", resp.res_message)));
@@ -559,7 +563,9 @@ impl Cloud189Driver {
         };
 
         if raw.is_empty() {
-            return Err(TokimoVfsError::Other("cloud189: no download URL in response".to_string()));
+            return Err(TokimoVfsError::Other(
+                "cloud189: no download URL in response".to_string(),
+            ));
         }
 
         let url = if raw.starts_with("//") {
@@ -604,8 +610,8 @@ impl Cloud189Driver {
             )
             .await?;
 
-        let key: RsaKeyResp =
-            serde_json::from_slice(&body).map_err(|e| TokimoVfsError::Other(format!("cloud189 getRsaKey parse: {e}")))?;
+        let key: RsaKeyResp = serde_json::from_slice(&body)
+            .map_err(|e| TokimoVfsError::Other(format!("cloud189 getRsaKey parse: {e}")))?;
 
         let pub_key_pem = make_public_key_pem(&key.pub_key);
 
@@ -755,8 +761,8 @@ impl Cloud189Driver {
             )
             .await?;
 
-        let resp: BatchTaskResp =
-            serde_json::from_slice(&body).map_err(|e| TokimoVfsError::Other(format!("cloud189 batchTask parse: {e}")))?;
+        let resp: BatchTaskResp = serde_json::from_slice(&body)
+            .map_err(|e| TokimoVfsError::Other(format!("cloud189 batchTask parse: {e}")))?;
 
         if resp.res_code != 0 {
             return Err(TokimoVfsError::Other(format!(

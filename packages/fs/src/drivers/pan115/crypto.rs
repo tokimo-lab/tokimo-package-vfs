@@ -3,7 +3,7 @@ use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
 use num_bigint::BigUint;
 use rand_core::{OsRng, RngCore};
 
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 
 const XOR_KEY_SEED: [u8; 144] = [
     0xf0, 0xe5, 0x69, 0xae, 0xbf, 0xdc, 0xbf, 0x8a, 0x1a, 0x45, 0xe8, 0xbe, 0x7d, 0xa6, 0x73, 0xb8, 0xde, 0x8f, 0xe7,

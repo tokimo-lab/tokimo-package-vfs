@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use crate::error::{TokimoVfsError, Result};
+use crate::error::{Result, TokimoVfsError};
 use crate::model::obj::{FileInfo, Link};
 use crate::model::storage::{StorageCapabilities, StorageStatus};
 

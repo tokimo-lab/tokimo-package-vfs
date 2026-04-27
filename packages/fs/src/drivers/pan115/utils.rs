@@ -1,6 +1,6 @@
 use std::path::{Component, Path};
 
-use tokimo_vfs_core::error::{TokimoVfsError, Result};
+use tokimo_vfs_core::error::{Result, TokimoVfsError};
 
 pub(super) fn optional_non_empty(params: &serde_json::Value, key: &str) -> Option<String> {
     params[key]
