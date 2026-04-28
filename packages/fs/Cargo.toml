@@ -33,7 +33,7 @@ tracing     = "0.1"
 rust-s3     = { version = "0.37.1", default-features = false, features = ["tokio-rustls-tls"] }
 reqwest_dav = "0.3"
 urlencoding = "2"
-suppaftp    = { version = "=8.0.1", features = ["tokio", "tokio-async-native-tls"] }
+suppaftp    = { version = "=8.0.1", features = ["tokio", "tokio-rustls-ring"] }
 rsa         = { version = "0.9", features = ["pem"] }
 aes         = "0.8"
 hmac        = "0.12"

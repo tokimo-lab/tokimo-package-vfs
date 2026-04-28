@@ -14,7 +14,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use suppaftp::tokio::{AsyncFtpStream, AsyncNativeTlsFtpStream};
+use suppaftp::tokio::{AsyncFtpStream, AsyncRustlsFtpStream};
 use suppaftp::types::FileType;
 use tokio::io::AsyncReadExt;
 use tokio::sync::{Mutex, mpsc::Sender};
@@ -54,7 +54,7 @@ struct FtpParams {
 /// An enum to unify plain FTP and FTPS connections.
 enum FtpConn {
     Plain(AsyncFtpStream),
-    Tls(AsyncNativeTlsFtpStream),
+    Tls(AsyncRustlsFtpStream),
 }
 
 impl FtpConn {
@@ -340,7 +340,7 @@ impl FtpDriver {
 
     async fn do_connect(&self) -> Result<FtpConn> {
         if self.params.use_ftps {
-            let mut stream = AsyncNativeTlsFtpStream::connect(&self.params.address)
+            let mut stream = AsyncRustlsFtpStream::connect(&self.params.address)
                 .await
                 .map_err(|e| ftp_err("connect tls", e))?;
             stream
