@@ -88,26 +88,35 @@ impl Vfs {
 
         // Local driver fast path: positional read syscall (no async overhead)
         if let Some(local_str) = self.resolve_real_path(&path).await {
-            if let Ok(file) = std::fs::File::open(&local_str) {
-                let file = Arc::new(file);
-                return Arc::new(move |offset: u64, size: usize| {
-                    #[cfg(unix)]
-                    use std::os::unix::fs::FileExt;
-                    #[cfg(windows)]
-                    use std::os::windows::fs::FileExt;
-                    let mut buf = vec![0u8; size];
-                    #[cfg(unix)]
-                    let n = file.read_at(&mut buf, offset)?;
-                    #[cfg(windows)]
-                    let n = file.seek_read(&mut buf, offset)?;
-                    buf.truncate(n);
-                    Ok(buf)
-                });
+            let local_str_for_open = local_str.clone();
+            let open_result = tokio::task::spawn_blocking(move || {
+                std::fs::File::open(&local_str_for_open)
+            })
+            .await;
+            match open_result {
+                Ok(Ok(file)) => {
+                    let file = Arc::new(file);
+                    return Arc::new(move |offset: u64, size: usize| {
+                        #[cfg(unix)]
+                        use std::os::unix::fs::FileExt;
+                        #[cfg(windows)]
+                        use std::os::windows::fs::FileExt;
+                        let mut buf = vec![0u8; size];
+                        #[cfg(unix)]
+                        let n = file.read_at(&mut buf, offset)?;
+                        #[cfg(windows)]
+                        let n = file.seek_read(&mut buf, offset)?;
+                        buf.truncate(n);
+                        Ok(buf)
+                    });
+                }
+                Ok(Err(_)) | Err(_) => {
+                    tracing::warn!(
+                        "VFS local fast-path open failed ({}), falling back to remote read",
+                        local_str,
+                    );
+                }
             }
-            tracing::warn!(
-                "VFS local fast-path open failed ({}), falling back to remote read",
-                local_str,
-            );
         }
 
         // Remote driver: capture Arc<StorageManager> + handle, block_on inside the closure
