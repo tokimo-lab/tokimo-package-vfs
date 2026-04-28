@@ -89,10 +89,7 @@ impl Vfs {
         // Local driver fast path: positional read syscall (no async overhead)
         if let Some(local_str) = self.resolve_real_path(&path).await {
             let local_str_for_open = local_str.clone();
-            let open_result = tokio::task::spawn_blocking(move || {
-                std::fs::File::open(&local_str_for_open)
-            })
-            .await;
+            let open_result = tokio::task::spawn_blocking(move || std::fs::File::open(&local_str_for_open)).await;
             match open_result {
                 Ok(Ok(file)) => {
                     let file = Arc::new(file);
