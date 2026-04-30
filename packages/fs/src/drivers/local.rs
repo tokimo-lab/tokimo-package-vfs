@@ -1,11 +1,14 @@
 //! 本地文件系统驱动。
 //!
 //! JSON 配置字段：
-//!   root — 本地根目录路径，如 "/mnt/media"
+//!   root_folder_path — 本地根目录路径，**内部统一格式**：
+//!     - Linux/macOS：标准 Unix 路径，如 `/mnt/media`
+//!     - Windows：盘符形式 `/c/Users/foo`、`/f/测试专用`，由本驱动转换为 `C:\Users\foo` 等
 
 use std::path::Path;
 
 use async_trait::async_trait;
+use tokimo_package_utils::path::internal_to_native;
 use tokimo_vfs_core::driver::config::{DriverConfig, DriverFactory};
 use tokimo_vfs_core::driver::traits::{
     CopyFile, DeleteDir, DeleteFile, Driver, Meta, Mkdir, MoveFile, PutFile, PutStream, Reader, Rename, ResolveLocal,
@@ -31,6 +34,8 @@ inventory::submit!(DriverFactory {
 pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
     let root = params["root_folder_path"]
         .as_str()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
         .ok_or_else(|| TokimoVfsError::InvalidConfig("local 驱动缺少 'root_folder_path' 字段".into()))?
         .to_string();
     Ok(Box::new(LocalDriver { root }))
@@ -40,13 +45,21 @@ struct LocalDriver {
     root: String,
 }
 
+/// 内部 Unix 风格路径 → OS 原生路径。
+///
+/// 复用 [`tokimo_package_utils::path::internal_to_native`]：
+/// - Linux/macOS：恒等返回
+/// - Windows：`/c/Users/foo` → `C:\Users\foo`，`/c` → `C:\`
+///
+/// 本驱动在文件系统调用边界处统一调用。
 impl LocalDriver {
     fn full_path(&self, path: &Path) -> String {
-        format!(
+        let combined = format!(
             "{}/{}",
             self.root.trim_end_matches('/'),
             path.to_string_lossy().trim_start_matches('/')
-        )
+        );
+        internal_to_native(&combined)
     }
 
     fn move_destination(&self, from: &Path, to_dir: &Path) -> Result<String> {
