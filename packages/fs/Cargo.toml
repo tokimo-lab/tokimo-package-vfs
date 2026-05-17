@@ -17,7 +17,7 @@ reqwest     = { version = "0.13", features = ["cookies", "form", "json", "query"
 rand_core   = "0.6"
 num-bigint  = "0.4"
 smb         = { package = "tokimo-vfs-smb", path = "../smb", default-features = false, features = ["async", "sign_hmac", "netbios-transport"] }
-smb-fscc    = "0.11.1"
+smb-fscc    = "0.11"
 futures-util = "0.3"
 russh       = "0.60"
 russh-sftp  = "2"

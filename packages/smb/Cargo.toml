@@ -17,11 +17,11 @@ path = "src/lib.rs"
 
 # Encoding/Decoding
 [dependencies]
-smb-dtyp = "=0.11.1"
-smb-fscc = "=0.11.1"
-smb-msg = { version = "=0.11.1", default-features = false, features = ["client"] }
-smb-rpc = "=0.11.1"
-smb-transport = { version = "=0.11.1", default-features = false }
+smb-dtyp = "0.11"
+smb-fscc = "0.11"
+smb-msg = { version = "0.11", default-features = false, features = ["client"] }
+smb-rpc = "0.11"
+smb-transport = { version = "0.11", default-features = false }
 
 binrw = "0.15"
 modular-bitfield = "0.11.2"
@@ -29,7 +29,7 @@ maybe-async = "0.2"
 pastey = "0.1.1"
 tracing = "0.1"
 thiserror = "2.0"
-url = "2.5"
+url = "2"
 
 # Crypto — RustCrypto release-candidates (upstream smb-rs requirement).
 hmac = "0.13.0-rc.2"
@@ -40,11 +40,11 @@ aes = "0.9.0-rc.1"
 md4 = "0.11"
 md-5 = "0.11"
 
-rand = "0.8.5"
+rand = "0.8"
 time = { version = "0.3.37", features = ["macros"] }
 
 # Async runtime (required by the `async` feature).
-tokio = { version = "1.43", features = ["time", "rt"], optional = true }
+tokio = { version = "1", features = ["time", "rt"], optional = true }
 tokio-util = { version = "0.7", optional = true }
 tokio-stream = { version = "0.1", optional = true }
 futures = { version = "0.3", optional = true }
