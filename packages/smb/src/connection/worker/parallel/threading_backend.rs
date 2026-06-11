@@ -119,7 +119,14 @@ impl MultiWorkerBackend for ThreadingBackend {
         let handle1 = std::thread::spawn(move || backend_receive.loop_receive(rtransport));
         let handle2 = std::thread::spawn(move || backend_send.loop_send(wtransport, send_channel_recv));
 
-        backend.loop_handles.lock().unwrap().replace((handle1, handle2));
+        backend
+            .loop_handles
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in ThreadingBackend::start, recovering: {e}");
+                e.into_inner()
+            })
+            .replace((handle1, handle2));
 
         Ok(backend)
     }
@@ -132,7 +139,10 @@ impl MultiWorkerBackend for ThreadingBackend {
         let handles = self
             .loop_handles
             .lock()
-            .unwrap()
+            .map_err(|e| {
+                tracing::error!("failed to acquire lock in ThreadingBackend::stop: {e}");
+                Error::LockError
+            })?
             .take()
             .ok_or(Error::ConnectionStopped)?;
 

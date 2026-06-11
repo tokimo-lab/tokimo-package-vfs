@@ -102,29 +102,47 @@ impl Semaphore {
     }
 
     pub fn acquire(&self) -> Result<SemaphorePermit<'_>, AcquireError> {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in Semaphore::acquire, recovering: {e}");
+            e.into_inner()
+        });
         while *guard == 0 {
-            guard = self.condvar.wait(guard).unwrap();
+            guard = self.condvar.wait(guard).unwrap_or_else(|e| {
+                tracing::warn!("condvar wait poisoned in Semaphore::acquire, recovering: {e}");
+                e.into_inner()
+            });
         }
         *guard -= 1;
         Ok(SemaphorePermit { sem: self, count: 1 })
     }
 
     pub fn acquire_many(&self, count: u32) -> Result<SemaphorePermit<'_>, AcquireError> {
-        let guard = self.inner.lock().unwrap();
-        let mut guard = self.condvar.wait_while(guard, |c| *c < count).unwrap();
+        let guard = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in Semaphore::acquire_many, recovering: {e}");
+            e.into_inner()
+        });
+        let mut guard = self.condvar.wait_while(guard, |c| *c < count).unwrap_or_else(|e| {
+            tracing::warn!("condvar wait_while poisoned in Semaphore::acquire_many, recovering: {e}");
+            e.into_inner()
+        });
         *guard -= count;
         Ok(SemaphorePermit { sem: self, count })
     }
 
     pub fn add_permits(&self, count: usize) {
-        let mut guard = self.inner.lock().unwrap();
+        let mut guard = self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in Semaphore::add_permits, recovering: {e}");
+            e.into_inner()
+        });
         *guard += count as u32;
         self.condvar.notify_all();
     }
 
     pub fn available_permits(&self) -> usize {
-        *self.inner.lock().unwrap() as usize
+        *self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in Semaphore::available_permits, recovering: {e}");
+            e.into_inner()
+        }) as usize
     }
 }
 

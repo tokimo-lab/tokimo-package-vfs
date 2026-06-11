@@ -114,7 +114,10 @@ impl ReadHandleCache {
     /// Evicts the oldest entry when capacity is exceeded; the evicted
     /// `Arc<File>` is dropped here, triggering `ResourceHandle::Drop`.
     fn insert(&self, path: String, handle: Arc<smb::resource::File>) {
-        let mut entries = self.entries.lock().unwrap();
+        let mut entries = self.entries.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in ReadHandleCache::insert, recovering: {e}");
+            e.into_inner()
+        });
         // Remove existing entry for the same path to avoid duplicates.
         entries.retain(|(p, _)| p != &path);
         if entries.len() >= READ_HANDLE_CACHE_CAPACITY {
@@ -126,7 +129,13 @@ impl ReadHandleCache {
     /// Remove the cached handle for `path` (e.g., after a read error).
     /// The dropped `Arc<File>` triggers `ResourceHandle::Drop`.
     fn evict(&self, path: &str) {
-        self.entries.lock().unwrap().retain(|(p, _)| p != path);
+        self.entries
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in ReadHandleCache::evict, recovering: {e}");
+                e.into_inner()
+            })
+            .retain(|(p, _)| p != path);
     }
 }
 
@@ -661,7 +670,10 @@ fn spawn_read(
 
 impl NativeSmbDriver {
     fn reset_read_usage(&self) {
-        *self.read_usage.lock().unwrap() = SmbReadUsage::default();
+        *self.read_usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NativeSmbDriver::reset_read_usage, recovering: {e}");
+            e.into_inner()
+        }) = SmbReadUsage::default();
     }
 
     async fn maybe_rotate_read_connection(&self, requested_bytes: u64) -> Result<()> {
@@ -669,7 +681,10 @@ impl NativeSmbDriver {
         const READ_ROTATE_INTERVAL_OPS: u64 = 2048;
 
         let should_rotate = {
-            let usage = self.read_usage.lock().unwrap();
+            let usage = self.read_usage.lock().unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in NativeSmbDriver::maybe_rotate_read_connection, recovering: {e}");
+                e.into_inner()
+            });
             usage.ops > 0 && (usage.bytes >= READ_ROTATE_INTERVAL_BYTES || usage.ops >= READ_ROTATE_INTERVAL_OPS)
         };
 
@@ -677,14 +692,25 @@ impl NativeSmbDriver {
             self.reconnect_state().await?;
         }
 
-        let mut usage = self.read_usage.lock().unwrap();
+        let mut usage = self.read_usage.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NativeSmbDriver::maybe_rotate_read_connection, recovering: {e}");
+            e.into_inner()
+        });
         usage.ops = usage.ops.saturating_add(1);
         usage.bytes = usage.bytes.saturating_add(requested_bytes);
         Ok(())
     }
 
     async fn ensure_state(&self) -> Result<Arc<SmbState>> {
-        let needs_init = { self.inner.lock().unwrap().is_none() };
+        let needs_init = {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("mutex poisoned in NativeSmbDriver::ensure_state, recovering: {e}");
+                    e.into_inner()
+                })
+                .is_none()
+        };
         if needs_init {
             self.init().await?;
         }
@@ -699,7 +725,15 @@ impl NativeSmbDriver {
         // TCP connection mid-stream. Instead, let the old client be cleaned
         // up naturally when the last Arc reference (from stream_to's file
         // handle) is dropped.
-        let _old_state = { self.inner.lock().unwrap().take() };
+        let _old_state = {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("mutex poisoned in NativeSmbDriver::clear_state, recovering: {e}");
+                    e.into_inner()
+                })
+                .take()
+        };
     }
 
     async fn reconnect_state(&self) -> Result<Arc<SmbState>> {
@@ -1108,7 +1142,15 @@ impl Meta for NativeSmbDriver {
     }
 
     async fn init(&self) -> Result<()> {
-        if self.inner.lock().unwrap().is_some() {
+        if self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
+                e.into_inner()
+            })
+            .is_some()
+        {
             return Ok(());
         }
 
@@ -1186,12 +1228,23 @@ impl Meta for NativeSmbDriver {
             write_chunk_size,
             read_handles: ReadHandleCache::new(),
         });
-        *self.inner.lock().unwrap() = Some(state);
+        *self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
+            e.into_inner()
+        }) = Some(state);
         Ok(())
     }
 
     async fn drop_driver(&self) -> Result<()> {
-        let state = { self.inner.lock().unwrap().take() };
+        let state = {
+            self.inner
+                .lock()
+                .unwrap_or_else(|e| {
+                    tracing::warn!("mutex poisoned in NativeSmbDriver::drop_driver, recovering: {e}");
+                    e.into_inner()
+                })
+                .take()
+        };
         if let Some(state) = state {
             run_with_smb_timeout("close", smb_operation_timeout(), async {
                 state.client.close().await.map_err(|e| smb_err("close", e))
@@ -1202,7 +1255,14 @@ impl Meta for NativeSmbDriver {
     }
 
     async fn status(&self) -> StorageStatus {
-        let connected = self.inner.lock().unwrap().is_some();
+        let connected = self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in NativeSmbDriver::status, recovering: {e}");
+                e.into_inner()
+            })
+            .is_some();
         StorageStatus {
             driver: "smb".into(),
             state: if connected {

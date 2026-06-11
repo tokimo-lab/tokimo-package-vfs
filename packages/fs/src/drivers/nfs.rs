@@ -188,11 +188,17 @@ fn fattr_to_fileinfo(name: &str, path_str: &str, attr: &fattr3) -> FileInfo {
 
 impl NfsDriver {
     fn cached_version(&self) -> Option<ResolvedNfsVersion> {
-        *self.resolved.lock().unwrap()
+        *self.resolved.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NfsDriver::cached_version, recovering: {e}");
+            e.into_inner()
+        })
     }
 
     fn set_cached_version(&self, version: ResolvedNfsVersion) {
-        *self.resolved.lock().unwrap() = Some(version);
+        *self.resolved.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NfsDriver::set_cached_version, recovering: {e}");
+            e.into_inner()
+        }) = Some(version);
     }
 
     async fn probe_version(&self, version: ResolvedNfsVersion) -> Result<()> {
