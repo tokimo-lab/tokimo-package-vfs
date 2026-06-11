@@ -283,11 +283,12 @@ impl CompressionAlgorithmImpl for Lz4Compression {
         out: &mut Vec<u8>,
     ) -> Result<(), CompressionError> {
         let start_index = out.len();
-        out.resize(start_index + original_size.unwrap() as usize, 0);
+        let original_size = original_size.ok_or(CompressionError::PatternV1InvalidDecompressedSize)?;
+        out.resize(start_index + original_size as usize, 0);
 
         let size = lz4_flex::decompress_into(compressed, &mut out[start_index..])?;
 
-        if size != original_size.unwrap() as usize {
+        if size != original_size as usize {
             Err(CompressionError::PatternV1InvalidDecompressedSize)?;
         }
         Ok(())

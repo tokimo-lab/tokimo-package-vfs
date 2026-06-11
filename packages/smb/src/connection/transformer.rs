@@ -144,7 +144,12 @@ impl Transformer {
         }
         // Additional data, if any
         if msg.additional_data.as_ref().is_some_and(|d| !d.is_empty()) {
-            outgoing_data.add_shared(msg.additional_data.unwrap().clone());
+            outgoing_data.add_shared(
+                msg.additional_data
+                    .as_ref()
+                    .expect("additional_data checked as Some above")
+                    .clone(),
+            );
         }
 
         // 1. Sign
@@ -187,7 +192,11 @@ impl Transformer {
                     // Build a vector of the entire data. In the future, this may be optimized to avoid copying.
                     // currently, there's not chained compression, and copy will occur anyway.
                     outgoing_data.consolidate();
-                    let compressed = compress.0.compress(outgoing_data.first().unwrap())?;
+                    let compressed = compress.0.compress(
+                        outgoing_data
+                            .first()
+                            .expect("outgoing_data is non-empty after consolidation"),
+                    )?;
 
                     let mut compressed_result = IoVec::default();
                     let write_compressed = compressed_result.add_owned(Vec::with_capacity(compressed.total_size()));

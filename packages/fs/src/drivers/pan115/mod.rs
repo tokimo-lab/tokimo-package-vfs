@@ -248,7 +248,11 @@ impl Reader for Pan115Driver {
         );
         headers.insert(REFERER, HeaderValue::from_static(REFERER_URL));
         if let Some(range_header) = build_range_header(offset, limit) {
-            headers.insert(RANGE, HeaderValue::from_str(&range_header).unwrap());
+            headers.insert(
+                RANGE,
+                HeaderValue::from_str(&range_header)
+                    .map_err(|err| TokimoVfsError::Other(format!("pan115 invalid range header: {err}")))?,
+            );
         }
         if let Some(ref ck) = cdn_cookie {
             headers.insert(
@@ -299,7 +303,11 @@ impl Reader for Pan115Driver {
             );
             headers.insert(REFERER, HeaderValue::from_static(REFERER_URL));
             if let Some(range_header) = build_range_header(offset, limit) {
-                headers.insert(RANGE, HeaderValue::from_str(&range_header).unwrap());
+                headers.insert(
+                    RANGE,
+                    HeaderValue::from_str(&range_header)
+                        .map_err(|err| TokimoVfsError::Other(format!("pan115 invalid range header: {err}")))?,
+                );
             }
             if let Some(ref ck) = cdn_cookie {
                 headers.insert(

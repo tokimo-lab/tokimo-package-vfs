@@ -355,7 +355,12 @@ impl ResourceHandle {
 
         match result {
             Ok(response) => {
-                let status = response.message.header.status.try_into().unwrap();
+                let status = response
+                    .message
+                    .header
+                    .status
+                    .try_into()
+                    .expect("status u32 should map to Status enum");
                 match status {
                     Status::Success => Ok(response.message.content.to_queryinfo()?.parse(info_type)?),
                     Status::BufferOverflow | Status::InfoLengthMismatch => {

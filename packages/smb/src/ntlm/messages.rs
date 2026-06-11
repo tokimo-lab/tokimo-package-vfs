@@ -96,9 +96,9 @@ fn read_field(input: &[u8], pos: usize) -> Result<(u16, u32), Error> {
     if input.len() < pos + 8 {
         return Err(Error::InvalidState("NTLM message truncated".into()));
     }
-    let len = u16::from_le_bytes(input[pos..pos + 2].try_into().unwrap());
+    let len = u16::from_le_bytes(input[pos..pos + 2].try_into().expect("slice length verified above"));
     // skip max-len (u16 at pos+2)
-    let off = u32::from_le_bytes(input[pos + 4..pos + 8].try_into().unwrap());
+    let off = u32::from_le_bytes(input[pos + 4..pos + 8].try_into().expect("slice length verified above"));
     Ok((len, off))
 }
 
@@ -110,7 +110,7 @@ pub(crate) fn parse_challenge(input: &[u8]) -> Result<Challenge, Error> {
     if &input[0..8] != NTLMSSP_SIGNATURE {
         return Err(Error::InvalidState("NTLM challenge signature mismatch".into()));
     }
-    let msg_type = u32::from_le_bytes(input[8..12].try_into().unwrap());
+    let msg_type = u32::from_le_bytes(input[8..12].try_into().expect("input length verified >= 48"));
     if msg_type != MSG_TYPE_CHALLENGE {
         return Err(Error::InvalidState(format!(
             "Expected CHALLENGE_MESSAGE, got msg_type={msg_type}"
@@ -119,8 +119,8 @@ pub(crate) fn parse_challenge(input: &[u8]) -> Result<Challenge, Error> {
 
     // TargetNameFields at offset 12 (len, maxlen, offset)
     let _target_name = read_field(input, 12)?;
-    let negotiate_flags = u32::from_le_bytes(input[20..24].try_into().unwrap());
-    let server_challenge: [u8; 8] = input[24..32].try_into().unwrap();
+    let negotiate_flags = u32::from_le_bytes(input[20..24].try_into().expect("input length verified >= 48"));
+    let server_challenge: [u8; 8] = input[24..32].try_into().expect("input length verified >= 48");
     // 8-byte reserved at 32..40
     let (ti_len, ti_off) = read_field(input, 40)?;
     let target_info = if ti_len == 0 {
@@ -298,13 +298,25 @@ fn push_field(buf: &mut Vec<u8>, len: u16, offset: u32) {
 fn challenge_timestamp_or_now(av_pairs: &[u8]) -> u64 {
     let mut p = 0usize;
     while p + 4 <= av_pairs.len() {
-        let id = u16::from_le_bytes(av_pairs[p..p + 2].try_into().unwrap());
-        let len = u16::from_le_bytes(av_pairs[p + 2..p + 4].try_into().unwrap()) as usize;
+        let id = u16::from_le_bytes(
+            av_pairs[p..p + 2]
+                .try_into()
+                .expect("bounds checked in while condition"),
+        );
+        let len = u16::from_le_bytes(
+            av_pairs[p + 2..p + 4]
+                .try_into()
+                .expect("bounds checked in while condition"),
+        ) as usize;
         if id == MSV_AV_EOL {
             break;
         }
         if id == MSV_AV_TIMESTAMP && len == 8 && p + 4 + 8 <= av_pairs.len() {
-            return u64::from_le_bytes(av_pairs[p + 4..p + 12].try_into().unwrap());
+            return u64::from_le_bytes(
+                av_pairs[p + 4..p + 12]
+                    .try_into()
+                    .expect("bounds checked: p + 4 + 8 <= av_pairs.len()"),
+            );
         }
         p += 4 + len;
     }

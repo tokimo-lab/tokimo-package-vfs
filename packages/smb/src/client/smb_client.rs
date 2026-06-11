@@ -219,16 +219,16 @@ impl Client {
                     .get(&session.session_id())
                     .expect("session info not found, but tree has just been created");
                 if session_info.session_alt_channels.is_none() {
-                    f.sessions.get_mut(&session.session_id()).unwrap().session_alt_channels = mchannel_map;
+                    f.sessions
+                        .get_mut(&session.session_id())
+                        .expect("session just looked up above")
+                        .session_alt_channels = mchannel_map;
                 }
                 Ok(())
             })
             .await?;
-        } else {
-            tracing::warn!(
-                "Failed to establish multi-channel connections: {}",
-                mchannel_map.err().unwrap()
-            );
+        } else if let Err(e) = mchannel_map {
+            tracing::warn!("Failed to establish multi-channel connections: {e}");
         }
 
         Ok(())
@@ -302,7 +302,10 @@ impl Client {
             .await?
             .insert(target.clone(), connect_share_info);
 
-        tracing::debug!("Successfully connected to share: {}", target.share().unwrap());
+        tracing::debug!(
+            "Successfully connected to share: {}",
+            target.share().expect("target must have share after connect")
+        );
 
         Ok(())
     }
@@ -458,12 +461,9 @@ impl Client {
         let address = TransportUtils::parse_socket_address(path.server())?;
         let channels = self
             ._with_connection(address.ip(), |c| {
-                let session_info = c.sessions.get(&session.session_id());
-                session_info.ok_or_else(|| {
+                let session_info = c.sessions.get(&session.session_id()).ok_or_else(|| {
                     Error::NotFound(format!("No session found for session ID: {}", session.session_id()))
                 })?;
-
-                let session_info = session_info.unwrap();
 
                 let mut alt_channels = session_info
                     .session_alt_channels
@@ -639,7 +639,11 @@ impl Client {
         let ipc_share = UncPath::ipc_share(unc.server())?;
         self._ipc_connect(ipc_share.server(), identity).await?;
         let ipc_tree = self.get_tree(&ipc_share).await?;
-        let network_interfaces = ipc_tree.as_ipc_tree().unwrap().query_network_interfaces().await?;
+        let network_interfaces = ipc_tree
+            .as_ipc_tree()
+            .expect("IPC share tree should always be an IPC tree")
+            .query_network_interfaces()
+            .await?;
 
         let mut result = HashMap::new();
 
@@ -825,15 +829,12 @@ impl MultiChannelUtils {
         current_server_address: IpAddr,
         rdma_only: bool,
     ) -> crate::Result<HashMap<u32, &NetworkInterfaceInfo>> {
-        let current_primary_interface = network_interfaces
+        let Some(current_primary_interface) = network_interfaces
             .iter()
-            .find(|iface| iface.sockaddr.socket_addr().ip() == current_server_address);
-
-        if current_primary_interface.is_none() {
+            .find(|iface| iface.sockaddr.socket_addr().ip() == current_server_address)
+        else {
             return Ok(HashMap::new());
-        }
-
-        let current_primary_interface = current_primary_interface.unwrap();
+        };
 
         let index_to_address = network_interfaces
             .iter()

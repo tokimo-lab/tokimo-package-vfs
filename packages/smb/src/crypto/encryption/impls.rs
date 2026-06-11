@@ -8,7 +8,7 @@ use crate::crypto::{CryptoError, EncryptingAlgo};
 pub(crate) fn trim_nonce<U: ArraySize>(algo: &dyn EncryptingAlgo, nonce: &EncryptionNonce) -> Array<u8, U> {
     // Sanity: the rest of the nonce is expected to be zero.
     debug_assert!(nonce[algo.nonce_size()..].iter().all(|&x| x == 0));
-    Array::try_from(&nonce[..algo.nonce_size()]).unwrap()
+    Array::try_from(&nonce[..algo.nonce_size()]).expect("nonce slice length matches algo nonce_size")
 }
 
 /// A list of all the supported encryption algorithms,

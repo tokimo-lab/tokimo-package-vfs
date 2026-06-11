@@ -104,7 +104,10 @@ impl ReadHandleCache {
     fn get(&self, path: &str) -> Option<Arc<smb::resource::File>> {
         self.entries
             .lock()
-            .unwrap()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in ReadHandleCache::get, recovering: {e}");
+                e.into_inner()
+            })
             .iter()
             .find(|(p, _)| p == path)
             .map(|(_, h)| Arc::clone(h))
@@ -209,7 +212,7 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
             // Single share after trimming — use direct driver
             let p = SmbParams {
                 host,
-                share: names.into_iter().next().unwrap(),
+                share: names.into_iter().next().expect("names.len() == 1 checked above"),
                 username,
                 password,
                 domain,
@@ -1383,7 +1386,7 @@ impl Reader for NativeSmbDriver {
                                     biased;
                                     permit = tx.reserve() => {
                                         if let Ok(permit) = permit {
-                                            permit.send(to_send.take().unwrap());
+                                            permit.send(to_send.take().expect("to_send initialized as Some above"));
                                         } else {
                                             receiver_dropped = true;
                                             stop_scheduling = true;

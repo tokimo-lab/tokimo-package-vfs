@@ -274,11 +274,11 @@ impl SessionMessageHandler {
 
     #[inline]
     async fn _with_channel<T: WithChannel>(&self, channel_id: Option<u32>, t: T) -> crate::Result<T::Result> {
-        if channel_id.is_none() || channel_id.unwrap() == self.primary_channel_id {
+        if channel_id.is_none_or(|id| id == self.primary_channel_id) {
             return t.work(&self.primary_channel).await;
         }
 
-        let channel_id = channel_id.unwrap();
+        let channel_id = channel_id.expect("channel_id is Some after is_none_or check");
 
         let handlers = self.channel_handlers.read().await?;
         if let Some(handler) = handlers.get(&channel_id) {

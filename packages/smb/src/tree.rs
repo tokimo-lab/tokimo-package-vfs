@@ -316,7 +316,12 @@ impl MessageHandler for TreeMessageHandler {
         let msg = self.upstream.recvo(options).await?;
 
         if !msg.message.header.flags.async_command()
-            && msg.message.header.tree_id.unwrap() != self.tree_id.load(Ordering::SeqCst)
+            && msg
+                .message
+                .header
+                .tree_id
+                .expect("tree_id should be set for tree messages")
+                != self.tree_id.load(Ordering::SeqCst)
         {
             return Err(Error::InvalidMessage(
                 "Received message for different tree, or tree disconnecting.".to_string(),

@@ -38,7 +38,7 @@ impl MessageSigner {
         header.signature = self._calculate_signature(header, all_data)?;
 
         // Update raw data to include the signature.
-        let header_buffer = all_data.get_mut(0).unwrap();
+        let header_buffer = all_data.get_mut(0).expect("IoVec must have at least one buffer");
         debug_assert!(
             header_buffer.len() >= Header::STRUCT_SIZE,
             "First buffer must contain the entire header."
@@ -60,9 +60,10 @@ impl MessageSigner {
         self.signing_algo.start(header);
         self.signing_algo.update(&header_bytes.into_inner());
 
-        if data.first().unwrap().len() >= Header::STRUCT_SIZE {
+        if data.first().expect("IoVec must have at least one buffer").len() >= Header::STRUCT_SIZE {
             // If the first buffer is larger than the header, we need to skip the header part.
-            self.signing_algo.update(&data.first().unwrap()[Header::STRUCT_SIZE..]);
+            self.signing_algo
+                .update(&data.first().expect("IoVec must have at least one buffer")[Header::STRUCT_SIZE..]);
         }
 
         // It is assumed here, too, that the first buffer is the header.

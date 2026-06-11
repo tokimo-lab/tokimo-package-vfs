@@ -322,7 +322,15 @@ impl Directory {
                         _ = cancel.cancelled(), if !cancel_called => {
                             // Cancellation step 1: send cancel request to server.
                             tracing::debug!("Watch cancelled by user");
-                            directory.send_cancel(receive_options.async_msg_ids.as_ref().unwrap()).await.ok();
+                            directory
+                                .send_cancel(
+                                    receive_options
+                                        .async_msg_ids
+                                        .as_ref()
+                                        .expect("async_msg_ids set for watch"),
+                                )
+                                .await
+                                .ok();
                             cancel_called = true;
                             // Now, wait for the server to confirm cancellation.
                         }
@@ -520,7 +528,7 @@ impl Directory {
             return Err(Error::BufferTooSmall {
                 data_type: "FileQuotaInformation",
                 required: FileQuotaInformation::MIN_SIZE.into(),
-                provided: output_buffer_length.unwrap(),
+                provided: output_buffer_length.expect("checked is_some_and above"),
             });
         }
 
@@ -910,7 +918,11 @@ mod iter_mtd {
                             canceller
                                 .directory
                                 ._watch_options(notify_filter, recursive, receive_options.clone());
-                        receive_options.async_msg_ids.as_ref().unwrap().reset();
+                        receive_options
+                            .async_msg_ids
+                            .as_ref()
+                            .expect("async_msg_ids set for watch")
+                            .reset();
 
                         use DirectoryWatchResult::*;
                         match watch_result {

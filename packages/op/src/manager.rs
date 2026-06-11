@@ -316,8 +316,12 @@ fn delete_dir_recursive<'a>(
                 )));
             }
         }
-        // unwrap is safe: caller already checked as_delete_dir() is Some
-        driver.as_delete_dir().unwrap().delete_dir(&path).await
+        // SAFETY: caller already checked as_delete_dir() is Some
+        driver
+            .as_delete_dir()
+            .expect("as_delete_dir() checked by caller")
+            .delete_dir(&path)
+            .await
     })
 }
 

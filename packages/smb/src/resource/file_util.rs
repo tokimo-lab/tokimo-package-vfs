@@ -437,7 +437,9 @@ mod copy {
         }
 
         for handle in handles {
-            handle.join().unwrap()?;
+            handle
+                .join()
+                .map_err(|_| crate::Error::JoinError("block copy task panicked".into()))??;
         }
 
         Ok(())

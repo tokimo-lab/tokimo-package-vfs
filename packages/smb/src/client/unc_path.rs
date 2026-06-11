@@ -41,7 +41,9 @@ impl UncPath {
     /// Creates a new [UncPath] with the IPC$ share,
     /// and with no path set.
     pub fn ipc_share(server: &str) -> crate::Result<Self> {
-        Ok(Self::new(server)?.with_share(Self::SMB_IPC_SHARE).unwrap())
+        Ok(Self::new(server)?
+            .with_share(Self::SMB_IPC_SHARE)
+            .expect("IPC$ is a valid share name"))
     }
 
     pub fn is_ipc_share(&self) -> bool {
@@ -92,12 +94,13 @@ impl UncPath {
     pub fn with_add_path(mut self, add_path: &str) -> Self {
         let add_path = Self::normalize_directory_separators(add_path);
 
-        if self.path.is_none() || self.path.as_ref().unwrap().is_empty() {
+        if self.path.as_deref().is_none_or(str::is_empty) {
             self.path = Some(add_path);
             return self;
         }
 
-        let path = self.path.as_ref().unwrap().trim_end_matches('\\');
+        // SAFETY: path is Some and non-empty due to early return above
+        let path = self.path.as_deref().unwrap().trim_end_matches('\\');
         let add_path = add_path.trim_start_matches('\\');
 
         self.path = Some(format!("{}\\{}", path, add_path));

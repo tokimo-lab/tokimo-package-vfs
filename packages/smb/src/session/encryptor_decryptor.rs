@@ -33,9 +33,13 @@ impl MessageEncryptor {
 
         message.consolidate();
 
-        let result = self
-            .algo
-            .encrypt(message.first_mut().unwrap(), &header.aead_bytes(), &header.nonce)?;
+        let result = self.algo.encrypt(
+            message
+                .first_mut()
+                .expect("IoVec must have at least one buffer after consolidation"),
+            &header.aead_bytes(),
+            &header.nonce,
+        )?;
 
         header.signature = result.signature;
 

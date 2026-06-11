@@ -70,18 +70,22 @@ impl Connection {
     ) -> crate::Result<u32> {
         tracing::debug!("Binding alternate session to new connection");
 
-        if self.conn_info().is_none() {
+        let Some(conn_info) = self.conn_info() else {
             return Err(Error::InvalidState(
                 "Connection must be negotiated before binding a session.".to_string(),
             ));
-        }
+        };
 
-        if !self.conn_info().as_ref().unwrap().negotiation.caps.multi_channel() {
+        if !conn_info.negotiation.caps.multi_channel() {
             return Err(Error::InvalidState("Server does not support multichannel.".to_string()));
         }
 
         primary_session
-            .bind(identity, &self.handler, self.handler.conn_info.get().unwrap())
+            .bind(
+                identity,
+                &self.handler,
+                self.handler.conn_info.get().expect("conn_info set during negotiate"),
+            )
             .await
     }
 
@@ -431,7 +435,10 @@ impl Connection {
         // Negotiate SMB1, Switch to SMB2
         let worker = self._negotiate_switch_to_smb2(transport, smb2_only_neg).await?;
 
-        self.handler.worker.set(worker).unwrap();
+        self.handler
+            .worker
+            .set(worker)
+            .expect("worker should not be set before negotiate");
 
         // Negotiate SMB2
         let info = self._negotiate_smb2(server_address).await?;
@@ -439,8 +446,7 @@ impl Connection {
         self.handler
             .worker
             .get()
-            .ok_or("Worker is uninitialized")
-            .unwrap()
+            .expect("worker just set above")
             .negotaite_complete(&info)
             .await;
 
@@ -451,7 +457,10 @@ impl Connection {
             tracing::debug!("Notification job started.");
         }
 
-        self.handler.conn_info.set(Arc::new(info)).unwrap();
+        self.handler
+            .conn_info
+            .set(Arc::new(info))
+            .expect("conn_info should not be set before negotiate");
 
         tracing::debug!("Negotiation successful");
         Ok(())
@@ -470,7 +479,15 @@ impl Connection {
     /// ## Notes:
     /// * Use the [`ConnectionConfig`] to configure authentication options.
     pub async fn authenticate(&self, identity: crate::ntlm::AuthIdentity) -> crate::Result<Session> {
-        let session = Session::create(identity, &self.handler, self.handler.conn_info.get().unwrap()).await?;
+        let session = Session::create(
+            identity,
+            &self.handler,
+            self.handler
+                .conn_info
+                .get()
+                .expect("connection must be negotiated before authenticate"),
+        )
+        .await?;
         let session_handler = session.handler.weak();
         self.handler
             .sessions
@@ -555,7 +572,7 @@ impl ConnectionMessageHandler {
                     let expected_response_payload_size = msg.message.content.expected_resp_size();
                     (1 + (max(send_payload_size, expected_response_payload_size) - 1) / Self::CREDIT_CALC_RATIO)
                         .try_into()
-                        .unwrap()
+                        .expect("credit charge should fit in target type")
                 } else {
                     1
                 };
@@ -637,7 +654,7 @@ impl ConnectionMessageHandler {
 
     #[cfg(feature = "async")]
     async fn start_notify(self: &Arc<Self>) -> crate::Result<()> {
-        let worker = self.worker.get().unwrap();
+        let worker = self.worker.get().expect("worker set during negotiate");
         let worker = worker.clone();
         const CHANNEL_BUFFER_SIZE: usize = 10;
         let (tx, mut rx) = tokio::sync::mpsc::channel(CHANNEL_BUFFER_SIZE);
@@ -668,7 +685,7 @@ impl ConnectionMessageHandler {
     #[cfg(feature = "multi_threaded")]
     fn start_notify(self: &Arc<Self>) -> crate::Result<()> {
         let (tx, rx) = mpsc::channel();
-        let worker = self.worker.get().unwrap();
+        let worker = self.worker.get().expect("worker set during negotiate");
         worker.start_notify_channel(tx)?;
 
         const POLLING_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
@@ -737,7 +754,7 @@ impl MessageHandler for ConnectionMessageHandler {
             ));
         }
 
-        let worker = self.worker.get().unwrap();
+        let worker = self.worker.get().expect("worker set during negotiate");
         let mut msg = worker.receive_next(&options).await?;
 
         #[allow(clippy::never_loop)]
@@ -846,15 +863,15 @@ impl MessageHandler for ConnectionMessageHandler {
             let sessions = self.sessions.lock().await?;
             let session = sessions.get(&msg.message.header.session_id);
 
-            if session.is_none() {
+            let Some(session) = session else {
                 tracing::warn!(
                     "Received notification for unknown session ID {}: {msg:?}",
                     msg.message.header.session_id
                 );
                 return Ok(());
-            }
+            };
 
-            session.unwrap().upgrade().ok_or_else(|| {
+            session.upgrade().ok_or_else(|| {
                 Error::InvalidState(format!(
                     "Session {} is no longer available",
                     msg.message.header.session_id

@@ -81,19 +81,24 @@ mod hmac_signer {
     impl HmacSha256Signer {
         pub fn build(signing_key: &SigningKey) -> Box<dyn SigningAlgo> {
             Box::new(HmacSha256Signer {
-                hmac: Some(HmacSha256::new_from_slice(signing_key).unwrap()),
+                hmac: Some(HmacSha256::new_from_slice(signing_key).expect("HMAC key is always valid")),
             })
         }
     }
 
     impl SigningAlgo for HmacSha256Signer {
         fn update(&mut self, data: &[u8]) {
-            self.hmac.as_mut().unwrap().update(data);
+            self.hmac.as_mut().expect("signer not finalized yet").update(data);
         }
 
         fn finalize(&mut self) -> u128 {
-            let result = self.hmac.take().unwrap().finalize().into_bytes();
-            u128::from_le_bytes(result[0..16].try_into().unwrap())
+            let result = self
+                .hmac
+                .take()
+                .expect("signer not finalized yet")
+                .finalize()
+                .into_bytes();
+            u128::from_le_bytes(result[0..16].try_into().expect("HMAC-SHA256 output is 32 bytes"))
         }
 
         fn clone_box(&self) -> Box<dyn SigningAlgo> {
@@ -124,11 +129,18 @@ mod cmac_signer {
 
     impl SigningAlgo for Cmac128Signer {
         fn update(&mut self, data: &[u8]) {
-            self.cmac.as_mut().unwrap().update(data);
+            self.cmac.as_mut().expect("signer not finalized yet").update(data);
         }
 
         fn finalize(&mut self) -> u128 {
-            u128::from_le_bytes(self.cmac.take().unwrap().finalize().into_bytes().into())
+            u128::from_le_bytes(
+                self.cmac
+                    .take()
+                    .expect("signer not finalized yet")
+                    .finalize()
+                    .into_bytes()
+                    .into(),
+            )
         }
 
         fn clone_box(&self) -> Box<dyn SigningAlgo> {
@@ -202,7 +214,9 @@ mod gmac_signer {
     impl super::SigningAlgo for Gmac128Signer {
         fn start(&mut self, header: &Header) {
             // The nonce is derived from the message ID.
-            self.nonce.set(Self::make_nonce(header)).unwrap();
+            self.nonce
+                .set(Self::make_nonce(header))
+                .expect("nonce should not be set twice");
         }
 
         fn update(&mut self, data: &[u8]) {
@@ -219,11 +233,11 @@ mod gmac_signer {
             let result = self
                 .gmac
                 .encrypt_inout_detached(
-                    self.nonce.get().unwrap().into(),
+                    self.nonce.get().expect("nonce set in start()").into(),
                     &self.buffer,
                     empty_data.as_mut_slice().into(),
                 )
-                .unwrap();
+                .expect("GMAC encryption should not fail with valid key and nonce");
             u128::from_le_bytes(result.into())
         }
 

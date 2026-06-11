@@ -147,7 +147,7 @@ impl MultiWorkerBackend for ThreadingBackend {
             .ok_or(Error::ConnectionStopped)?;
 
         // wake up the sender to stop the loop.
-        self.worker.sender.send(None).unwrap();
+        self.worker.sender.send(None).ok();
 
         // Join the threads.
         handles

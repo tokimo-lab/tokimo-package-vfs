@@ -328,7 +328,9 @@ impl SessionInfo {
                     "Note! session does not require encryption, but it is required by the connection config. Forcing encryption."
                 );
             }
-            let encryption_ok = if let SessionInfoState::SettingUp { algos, .. } = self.state.as_ref().unwrap() {
+            let encryption_ok = if let SessionInfoState::SettingUp { algos, .. } =
+                self.state.as_ref().expect("session state must be initialized")
+            {
                 algos.encryptor.is_some() && algos.decryptor.is_some()
             } else {
                 false

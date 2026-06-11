@@ -49,7 +49,7 @@ pub trait Worker: Sized + std::fmt::Debug {
         let recv_fut = self.receive_next(options);
         tokio::select! {
             biased;
-            _ = options.async_cancel.as_ref().unwrap().cancelled() => {
+            _ = options.async_cancel.as_ref().expect("async_cancel checked as Some above").cancelled() => {
                 Err(Error::Cancelled("receive_next"))
             }
             res = recv_fut => {
@@ -156,7 +156,9 @@ pub trait Worker: Sized + std::fmt::Debug {
 
     #[maybe_async]
     async fn negotaite_complete(&self, neg: &ConnectionInfo) {
-        self.transformer().negotiated(neg).await.unwrap();
+        self.transformer().negotiated(neg).await.unwrap_or_else(|e| {
+            tracing::error!("Failed to complete negotiation: {e}");
+        });
     }
 
     #[maybe_async]

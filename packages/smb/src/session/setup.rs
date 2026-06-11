@@ -100,7 +100,7 @@ where
 
         let result = self._setup_loop().await;
         match result {
-            Ok(()) => Ok(self.result.take().unwrap()),
+            Ok(()) => Ok(self.result.take().expect("result set during setup loop")),
             Err(e) => {
                 tracing::error!("Failed to setup session: {}", e);
                 if let Err(ce) = T::error_cleanup(self).await {
@@ -129,7 +129,12 @@ where
             // If keys are exchanged, set them up, to enable validation of next response!
             let request = self.send_setup_request(next_buf).await?;
             if is_auth_done {
-                self.preauth_hash = self.preauth_hash.take().unwrap().finish().into();
+                self.preauth_hash = self
+                    .preauth_hash
+                    .take()
+                    .expect("preauth_hash set during construction")
+                    .finish()
+                    .into();
                 self.make_channel().await?;
             }
 
@@ -184,8 +189,7 @@ where
 
         self.upstream
             .worker()
-            .ok_or_else(|| Error::InvalidState("Worker not available!".to_string()))
-            .unwrap()
+            .expect("worker must be available during session setup")
             .session_started(&session)
             .await?;
 
@@ -207,7 +211,11 @@ where
             .with_status(expected_status)
             .with_msg_id_filter(for_msg_id);
 
-        let channel_set_up = self.result.is_some() && self.result.as_ref().unwrap().read().await?.channel.is_some();
+        let channel_set_up = if let Some(result) = &self.result {
+            result.read().await?.channel.is_some()
+        } else {
+            false
+        };
         let skip_security_validation = !is_auth_done && !channel_set_up;
         if let Some(handler) = &self.handler {
             tracing::trace!(
@@ -234,7 +242,7 @@ where
             self.upstream.sendo(request).await?
         };
 
-        self.next_preauth_hash(send_result.raw.as_ref().unwrap());
+        self.next_preauth_hash(send_result.raw.as_ref().expect("raw data must be present after send"));
         Ok(send_result)
     }
 
@@ -255,8 +263,13 @@ where
 
         self.channel = Some(channel_info);
 
-        let mut session_lock = self.result.as_ref().unwrap().write().await?;
-        session_lock.set_channel(self.channel.take().unwrap());
+        let mut session_lock = self
+            .result
+            .as_ref()
+            .expect("result set before make_channel")
+            .write()
+            .await?;
+        session_lock.set_channel(self.channel.take().expect("channel just set above"));
 
         tracing::trace!("Channel for current setup has been initialized");
         Ok(())
@@ -267,14 +280,20 @@ where
     }
 
     fn preauth_hash_value(&self) -> Option<PreauthHashValue> {
-        self.preauth_hash.as_ref().unwrap().unwrap_final_hash().copied()
+        self.preauth_hash
+            .as_ref()
+            .expect("preauth_hash set during construction")
+            .unwrap_final_hash()
+            .copied()
     }
 
     fn next_preauth_hash(&mut self, data: &IoVec) -> &PreauthHashState {
         if let Some(ref mut hash) = self.preauth_hash {
             *hash = hash.clone().next(data);
         }
-        self.preauth_hash.as_ref().unwrap()
+        self.preauth_hash
+            .as_ref()
+            .expect("preauth_hash set during construction")
     }
 
     pub fn upstream(&self) -> &'a ChannelUpstream {
@@ -349,7 +368,7 @@ impl SessionSetupProperties for SmbSessionBind {
             .message
             .content
             .as_mut_sessionsetup()
-            .unwrap()
+            .expect("request content is a sessionsetup")
             .flags
             .set_binding(true);
         Ok(request)
@@ -367,7 +386,7 @@ impl SessionSetupProperties for SmbSessionBind {
             .upstream
             .worker()
             .ok_or_else(|| Error::InvalidState("Worker not available!".to_string()))?
-            .session_ended(setup.result.as_ref().unwrap())
+            .session_ended(setup.result.as_ref().expect("result checked as Some above"))
             .await
     }
 
@@ -400,7 +419,7 @@ impl SessionSetupProperties for SmbSessionNew {
         }
 
         tracing::trace!("Invalidating session before cleanup.");
-        let session = setup.result.as_ref().unwrap();
+        let session = setup.result.as_ref().expect("result checked as Some above");
         {
             let session_lock = session.read().await?;
             session_lock.session.write().await?.invalidate();
@@ -410,7 +429,7 @@ impl SessionSetupProperties for SmbSessionNew {
             .upstream
             .worker()
             .ok_or_else(|| Error::InvalidState("Worker not available!".to_string()))?
-            .session_ended(setup.result.as_ref().unwrap())
+            .session_ended(setup.result.as_ref().expect("result checked as Some above"))
             .await
     }
 
@@ -423,7 +442,7 @@ impl SessionSetupProperties for SmbSessionNew {
         setup
             .result
             .as_ref()
-            .unwrap()
+            .expect("result set during setup")
             .read()
             .await?
             .session
@@ -437,9 +456,9 @@ impl SessionSetupProperties for SmbSessionNew {
         T: SessionSetupProperties,
     {
         tracing::trace!("Session setup successful");
-        let result = setup.result.as_ref().unwrap().read().await?;
+        let result = setup.result.as_ref().expect("result set during setup").read().await?;
         let mut session = result.session.write().await?;
-        session.ready(setup.flags.unwrap(), setup.conn_info)
+        session.ready(setup.flags.expect("flags set during setup"), setup.conn_info)
     }
 
     async fn init_session<T>(_setup: &SessionSetup<'_, T>, session_id: u64) -> crate::Result<Arc<RwLock<SessionInfo>>>
