@@ -493,6 +493,7 @@ impl Reader for S3Driver {
                     path: display,
                     size: obj.size,
                     is_dir: false,
+                    created: None,
                     modified: parse_last_modified(&obj.last_modified),
                 });
             }
@@ -510,6 +511,7 @@ impl Reader for S3Driver {
                         path: display,
                         size: 0,
                         is_dir: true,
+                        created: None,
                         modified: None,
                     });
                 }
@@ -527,6 +529,7 @@ impl Reader for S3Driver {
                 path: "/".to_string(),
                 size: 0,
                 is_dir: true,
+                created: None,
                 modified: None,
             });
         }
@@ -544,6 +547,7 @@ impl Reader for S3Driver {
                 path: display_path,
                 size: head.content_length.unwrap_or(0).max(0) as u64,
                 is_dir: false,
+                created: None,
                 modified: head.last_modified.as_deref().and_then(parse_last_modified),
             });
         }
@@ -564,6 +568,7 @@ impl Reader for S3Driver {
                 path: display_path,
                 size: 0,
                 is_dir: true,
+                created: None,
                 modified: None,
             })
         } else {

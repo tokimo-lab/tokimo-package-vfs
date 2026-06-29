@@ -163,6 +163,7 @@ impl WebDavDriver {
                     path,
                     size: f.content_length as u64,
                     is_dir: false,
+                    created: None,
                     modified: Some(f.last_modified),
                 })
             }
@@ -177,6 +178,7 @@ impl WebDavDriver {
                     path,
                     size: 0,
                     is_dir: true,
+                    created: None,
                     modified: Some(f.last_modified),
                 })
             }
@@ -275,6 +277,7 @@ impl Reader for WebDavDriver {
                     path: display,
                     size: 0,
                     is_dir: true,
+                    created: None,
                     modified: None,
                 })
             })

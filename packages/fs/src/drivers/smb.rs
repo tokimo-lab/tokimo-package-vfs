@@ -811,6 +811,7 @@ impl NativeSmbDriver {
                         name,
                         size: entry.end_of_file,
                         is_dir: entry.file_attributes.directory(),
+                        created: Some(filetime_to_datetime(entry.creation_time.since_epoch())),
                         modified: Some(filetime_to_datetime(entry.last_write_time.since_epoch())),
                     });
                 }
@@ -875,6 +876,7 @@ impl NativeSmbDriver {
             path: path.to_string_lossy().to_string(),
             size: info.standard.end_of_file,
             is_dir: bool::from(info.standard.directory),
+            created: Some(filetime_to_datetime(info.basic.creation_time.since_epoch())),
             modified: Some(filetime_to_datetime(info.basic.last_write_time.since_epoch())),
         })
     }
@@ -1722,6 +1724,7 @@ impl SmbMultiShareDriver {
             name,
             size: 0,
             is_dir: true,
+            created: None,
             modified: Some(now),
         };
 
@@ -1804,6 +1807,7 @@ impl SmbMultiShareDriver {
                 name,
                 size: 0,
                 is_dir: true,
+                created: None,
                 modified: Some(now),
             })
             .collect();
@@ -2251,6 +2255,7 @@ impl Reader for SmbMultiShareDriver {
                 name: String::new(),
                 size: 0,
                 is_dir: true,
+                created: None,
                 modified: None,
             });
         }

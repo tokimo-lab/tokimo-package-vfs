@@ -127,6 +127,7 @@ impl Reader for LocalDriver {
                 path: rel,
                 size,
                 is_dir,
+                created: meta.as_ref().and_then(|meta| meta.created().ok().map(Into::into)),
                 modified: None,
             });
         }
@@ -143,6 +144,7 @@ impl Reader for LocalDriver {
             path: format!("/{}", path.to_string_lossy().trim_start_matches('/')),
             size: meta.len(),
             is_dir: meta.is_dir(),
+            created: meta.created().ok().map(Into::into),
             modified: None,
         })
     }

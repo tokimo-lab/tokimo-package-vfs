@@ -165,6 +165,7 @@ pub(super) fn to_file_info(path: &Path, entry: &Pan115Entry) -> FileInfo {
         path: child_display_path(path, &entry.name),
         size: if entry.is_dir { 0 } else { entry.size },
         is_dir: entry.is_dir,
+        created: None,
         modified: entry.modified,
     }
 }

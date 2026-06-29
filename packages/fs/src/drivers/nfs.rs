@@ -182,6 +182,7 @@ fn fattr_to_fileinfo(name: &str, path_str: &str, attr: &fattr3) -> FileInfo {
         path: path_str.to_string(),
         size: attr.size,
         is_dir: matches!(attr.type_, ftype3::NF3DIR),
+        created: None,
         modified: Some(time_to_datetime(attr.mtime)),
     }
 }
@@ -386,6 +387,7 @@ fn nfs4_attrs_to_fileinfo(name: &str, path_str: &str, attrs: &nfs4::FileAttribut
         path: path_str.to_string(),
         size,
         is_dir,
+        created: None,
         modified,
     }
 }
@@ -543,6 +545,7 @@ impl NfsDriver {
                                 path: rel_path,
                                 size: 0,
                                 is_dir: false,
+                                created: None,
                                 modified: None,
                             });
                         }

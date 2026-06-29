@@ -8,6 +8,7 @@ pub struct FileInfo {
     pub path: String,
     pub size: u64,
     pub is_dir: bool,
+    pub created: Option<DateTime<Utc>>,
     pub modified: Option<DateTime<Utc>>,
 }
 

@@ -224,6 +224,7 @@ fn folder_to_info(f: &Cloud189Folder, parent: &Path) -> FileInfo {
         path: parent.join(&f.name).to_string_lossy().to_string(),
         is_dir: true,
         size: 0,
+        created: None,
         modified: parse_cn_time(&f.last_op_time),
     }
 }
@@ -234,6 +235,7 @@ fn file_to_info(f: &Cloud189File, parent: &Path) -> FileInfo {
         path: parent.join(&f.name).to_string_lossy().to_string(),
         is_dir: false,
         size: f.size as u64,
+        created: None,
         modified: parse_cn_time(&f.last_op_time),
     }
 }
@@ -933,6 +935,7 @@ impl Reader for Cloud189Driver {
                 path: path.to_string_lossy().to_string(),
                 is_dir: true,
                 size: 0,
+                created: None,
                 modified: None,
             });
         }

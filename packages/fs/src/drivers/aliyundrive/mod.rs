@@ -148,6 +148,7 @@ impl Reader for AliyunDriveDriver {
                 path: "/".into(),
                 size: 0,
                 is_dir: true,
+                created: None,
                 modified: None,
             });
         }
@@ -158,6 +159,7 @@ impl Reader for AliyunDriveDriver {
             path: display_path,
             size: if entry.is_dir { 0 } else { entry.size },
             is_dir: entry.is_dir,
+            created: None,
             modified: entry.modified,
         })
     }

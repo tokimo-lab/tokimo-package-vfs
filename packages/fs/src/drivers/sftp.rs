@@ -300,6 +300,7 @@ fn metadata_to_fileinfo(name: &str, path_str: &str, meta: &russh_sftp::client::f
         path: path_str.to_string(),
         size,
         is_dir,
+        created: None,
         modified,
     }
 }

@@ -272,6 +272,7 @@ fn parse_unix_list(line: &str, parent_path: &str) -> Option<FileInfo> {
         path,
         size,
         is_dir: is_dir || is_link,
+        created: None,
         modified,
     })
 }
@@ -304,6 +305,7 @@ fn parse_windows_list(line: &str, parent_path: &str) -> Option<FileInfo> {
         path,
         size,
         is_dir,
+        created: None,
         modified: None,
     })
 }
@@ -482,6 +484,7 @@ impl Reader for FtpDriver {
                     path: display,
                     size: 0,
                     is_dir,
+                    created: None,
                     modified: None,
                 })
             })
