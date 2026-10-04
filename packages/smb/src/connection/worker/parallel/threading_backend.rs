@@ -37,7 +37,7 @@ impl ThreadingBackend {
             }
             match self.worker.incoming_data_callback(next) {
                 Ok(_) => {}
-                Err(Error::TransportError(TransportError::NotConnected)) => {
+                Err(Error::TransportError(TransportError::NotConnected | TransportError::IoError(_))) => {
                     tracing::error!("Connection closed.");
                     self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
                     break;
@@ -51,18 +51,17 @@ impl ThreadingBackend {
             }
         }
         tracing::debug!("Receive loop finished. Cleaning up.");
-        if let Ok(mut state) = self.worker.state.lock() {
-            for (_, tx) in state.awaiting.drain() {
-                let _notify_result = tx.send(Err(Error::ConnectionStopped));
-            }
-        }
+        self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.worker.mark_stopped();
+        // The sender may be waiting on its channel after the receiver exits.
+        let _ = self.worker.sender.send(None);
     }
 
     fn loop_send(&self, mut wtransport: Box<dyn SmbTransportWrite>, send_channel: mpsc::Receiver<Option<IoVec>>) {
-        loop {
+        while !self.is_cancelled() {
             match self.loop_send_next(send_channel.recv(), wtransport.as_mut()) {
                 Ok(_) => {}
-                Err(Error::TransportError(TransportError::NotConnected)) => {
+                Err(Error::TransportError(TransportError::NotConnected | TransportError::IoError(_))) => {
                     tracing::error!("Connection closed.");
                     self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
                     break;
@@ -75,6 +74,8 @@ impl ThreadingBackend {
                 }
             }
         }
+        self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
+        let _ = self.worker.mark_stopped();
         tracing::debug!("Send loop finished.");
     }
 
@@ -84,7 +85,8 @@ impl ThreadingBackend {
         message: Result<Option<IoVec>, mpsc::RecvError>,
         wtransport: &mut dyn SmbTransportWrite,
     ) -> crate::Result<()> {
-        self.worker.outgoing_data_callback(message?, wtransport)
+        self.worker
+            .outgoing_data_callback(message.map_err(|_| Error::ConnectionStopped)?, wtransport)
     }
 }
 
@@ -173,16 +175,14 @@ impl MultiWorkerBackend for ThreadingBackend {
 
     fn wait_on_waiter(waiter: Self::AwaitingWaiter, timeout: Duration) -> crate::Result<IncomingMessage> {
         if timeout == Duration::ZERO {
-            return waiter
-                .recv()
-                .map_err(|_| Error::MessageProcessingError("Failed to receive message.".to_string()))?;
+            return waiter.recv().map_err(|_| Error::ConnectionStopped)?;
         }
 
         waiter.recv_timeout(timeout).map_err(|e| match e {
             std::sync::mpsc::RecvTimeoutError::Timeout => {
                 Error::OperationTimeout(TimedOutTask::ReceiveNextMessage, timeout)
             }
-            _ => Error::MessageProcessingError("Failed to receive message.".to_string()),
+            _ => Error::ConnectionStopped,
         })?
     }
 

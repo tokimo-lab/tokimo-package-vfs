@@ -152,6 +152,7 @@ pub struct NativeSmbDriver {
     params: SmbParams,
     caps: StorageCapabilities,
     inner: Arc<Mutex<Option<Arc<SmbState>>>>,
+    connection_lock: tokio::sync::Mutex<()>,
     read_usage: Arc<Mutex<SmbReadUsage>>,
 }
 
@@ -233,6 +234,7 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
                 params: p,
                 caps,
                 inner: Arc::new(Mutex::new(None)),
+                connection_lock: tokio::sync::Mutex::new(()),
                 read_usage: Arc::new(Mutex::new(SmbReadUsage::default())),
             }));
         }
@@ -268,6 +270,7 @@ pub fn factory(params: &serde_json::Value) -> Result<Box<dyn Driver>> {
         params: p,
         caps,
         inner: Arc::new(Mutex::new(None)),
+        connection_lock: tokio::sync::Mutex::new(()),
         read_usage: Arc::new(Mutex::new(SmbReadUsage::default())),
     }))
 }
@@ -672,6 +675,100 @@ fn spawn_read(
 }
 
 impl NativeSmbDriver {
+    async fn init_state(&self) -> Result<()> {
+        if self
+            .inner
+            .lock()
+            .unwrap_or_else(|e| {
+                tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
+                e.into_inner()
+            })
+            .is_some()
+        {
+            return Ok(());
+        }
+
+        let params = self.params.clone();
+        let unc_str = format!(r"\\{}\{}", params.host, params.share);
+        let base_unc = UncPath::from_str(&unc_str)
+            .map_err(|e| TokimoVfsError::InvalidConfig(format!("非法 SMB UNC 路径: {e}")))?;
+
+        let user_name = if params.username.is_empty() {
+            current_username().unwrap_or_else(|| "guest".to_string())
+        } else {
+            params.username.clone()
+        };
+
+        let effective_domain = effective_domain(&params.domain);
+        let qualified_user = if user_name.contains('\\') || user_name.contains('@') || effective_domain.is_empty() {
+            user_name.clone()
+        } else {
+            format!(r"{effective_domain}\{user_name}")
+        };
+        let password = if params.password.is_empty() {
+            read_ntlm_password_from_file(effective_domain, &params.host).unwrap_or_default()
+        } else {
+            params.password.clone()
+        };
+
+        let client = build_client();
+        client
+            .share_connect(&base_unc, &qualified_user, password.clone())
+            .await
+            .map_err(|err| TokimoVfsError::ConnectionError(format!("SMB connect failed: {err}")))?;
+
+        let root_unc = build_unc(&base_unc, &params.root_path, "");
+        client
+            .create_file(&root_unc, &open_dir_args())
+            .await
+            .map_err(|e| smb_err("open root", e))?;
+
+        let conn = client
+            .get_connection(base_unc.server())
+            .await
+            .map_err(|e| smb_err("get connection info", e))?;
+        let negotiated = conn
+            .conn_info()
+            .ok_or_else(|| TokimoVfsError::Other("smb get connection info: 未完成协商".into()))?;
+        let smb_version = smb_dialect_label(negotiated.negotiation.dialect_rev);
+        let (read_chunk_size, read_parallelism) = compute_read_window(negotiated.negotiation.max_read_size as usize);
+        let (stream_chunk_size, stream_parallelism) =
+            compute_stream_window(negotiated.negotiation.max_read_size as usize);
+        // Cap write chunks at the server's negotiated max_write_size (usually 1-8 MB).
+        let write_chunk_size = (negotiated.negotiation.max_write_size as usize).clamp(65536, SMB_MAX_READ_CHUNK);
+        info!(
+            host = %params.host,
+            share = %params.share,
+            smb_version,
+            dialect = ?negotiated.negotiation.dialect_rev,
+            max_read_size = negotiated.negotiation.max_read_size,
+            max_write_size = negotiated.negotiation.max_write_size,
+            write_chunk_size,
+            read_chunk_size,
+            read_parallelism,
+            stream_chunk_size,
+            stream_parallelism,
+            "SMB negotiated read/write window"
+        );
+
+        let state = Arc::new(SmbState {
+            client,
+            base_unc,
+            root_path: params.root_path,
+            read_chunk_size,
+            read_parallelism,
+            stream_chunk_size,
+            stream_parallelism,
+            write_chunk_size,
+            read_handles: ReadHandleCache::new(),
+        });
+        *self.inner.lock().unwrap_or_else(|e| {
+            tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
+            e.into_inner()
+        }) = Some(state);
+        Ok(())
+    }
+
     fn reset_read_usage(&self) {
         *self.read_usage.lock().unwrap_or_else(|e| {
             tracing::warn!("mutex poisoned in NativeSmbDriver::reset_read_usage, recovering: {e}");
@@ -692,7 +789,8 @@ impl NativeSmbDriver {
         };
 
         if should_rotate {
-            self.reconnect_state().await?;
+            let state = self.ensure_state().await?;
+            self.reconnect_state(&state).await?;
         }
 
         let mut usage = self.read_usage.lock().unwrap_or_else(|e| {
@@ -720,28 +818,24 @@ impl NativeSmbDriver {
         get_state(&self.inner)
     }
 
-    #[allow(clippy::unused_async)]
-    async fn clear_state(&self) {
-        // Only remove the state from the mutex — do NOT close the client.
-        // Active stream_to tasks hold Arc<SmbState> clones with open file
-        // handles. Calling client.close() here would kill their underlying
-        // TCP connection mid-stream. Instead, let the old client be cleaned
-        // up naturally when the last Arc reference (from stream_to's file
-        // handle) is dropped.
-        let _old_state = {
-            self.inner
-                .lock()
-                .unwrap_or_else(|e| {
-                    tracing::warn!("mutex poisoned in NativeSmbDriver::clear_state, recovering: {e}");
-                    e.into_inner()
-                })
-                .take()
-        };
+    fn clear_state(&self, failed: &Arc<SmbState>) {
+        // Existing consumers keep their old client until their Arc is released.
+        // A late failure must never remove a newer connection.
+        let mut inner = self.inner.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if inner.as_ref().is_some_and(|state| Arc::ptr_eq(state, failed)) {
+            inner.take();
+        }
     }
 
-    async fn reconnect_state(&self) -> Result<Arc<SmbState>> {
-        self.clear_state().await;
-        self.init().await?;
+    async fn reconnect_state(&self, failed: &Arc<SmbState>) -> Result<Arc<SmbState>> {
+        let _guard = self.connection_lock.lock().await;
+        if let Ok(state) = get_state(&self.inner)
+            && !Arc::ptr_eq(&state, failed)
+        {
+            return Ok(state);
+        }
+        self.clear_state(failed);
+        self.init_state().await?;
         self.reset_read_usage();
         get_state(&self.inner)
     }
@@ -760,12 +854,18 @@ impl NativeSmbDriver {
         Fut: Future<Output = Result<T>>,
     {
         let state = self.ensure_state().await?;
-        match run_with_smb_timeout("operation", timeout, op(state)).await {
+        match run_with_smb_timeout("operation", timeout, op(Arc::clone(&state))).await {
             Ok(value) => Ok(value),
             Err(err) if should_retry_smb(&err) => {
                 warn!("SMB operation failed, reconnecting and retrying once: {}", err);
-                let state = self.reconnect_state().await?;
-                run_with_smb_timeout("retry", timeout, op(state)).await
+                let state = self.reconnect_state(&state).await?;
+                let result = run_with_smb_timeout("retry", timeout, op(Arc::clone(&state))).await;
+                if let Err(err) = &result
+                    && should_retry_smb(err)
+                {
+                    self.clear_state(&state);
+                }
+                result
             }
             Err(err) => Err(err),
         }
@@ -879,6 +979,183 @@ impl NativeSmbDriver {
             created: Some(filetime_to_datetime(info.basic.creation_time.since_epoch())),
             modified: Some(filetime_to_datetime(info.basic.last_write_time.since_epoch())),
         })
+    }
+
+    async fn stream_with_state(
+        state: &Arc<SmbState>,
+        path: &Path,
+        emitted_offset: &mut u64,
+        limit: Option<u64>,
+        tx: &Sender<Vec<u8>>,
+    ) -> Result<()> {
+        let offset = *emitted_offset;
+        let file = Arc::new(
+            run_with_smb_timeout("stream open", smb_operation_timeout(), open_file_resource(state, path)).await?,
+        );
+        let end = match limit {
+            Some(0) => return Ok(()),
+            Some(limit) => offset.saturating_add(limit),
+            None => {
+                let file_size = run_with_smb_timeout("stream query size", smb_operation_timeout(), async {
+                    file.query_info::<FileStandardInformation>()
+                        .await
+                        .map(|info| info.end_of_file)
+                        .map_err(|err| smb_err("stream query size", err))
+                })
+                .await?;
+
+                if offset >= file_size {
+                    return Ok(());
+                }
+
+                file_size
+            }
+        };
+        let chunk_size = state.stream_chunk_size;
+        // Cap parallelism for all stream_to calls. High parallelism (32)
+        // overwhelms SMB servers, causing read failures after ~85MB.
+        let parallelism = state.stream_parallelism.min(SMB_OPEN_ENDED_STREAM_PARALLELISM_CAP);
+        let mut positions = std::iter::successors(Some(offset), move |pos| {
+            let next = *pos + chunk_size as u64;
+            (next < end).then_some(next)
+        })
+        .enumerate();
+        let mut reads = FuturesUnordered::new();
+        let mut ready = BTreeMap::new();
+        let mut next_idx = 0usize;
+        let mut receiver_dropped = false;
+        let mut stop_scheduling = false;
+        let mut read_error = None;
+
+        for _ in 0..parallelism {
+            let Some((idx, pos)) = positions.next() else {
+                break;
+            };
+            reads.push(spawn_read(Arc::clone(&file), idx, pos, end, chunk_size, "stream read"));
+        }
+
+        while let Some(chunk_res) = reads.next().await {
+            match chunk_res {
+                Ok((idx, chunk, expected)) => {
+                    ready.insert(idx, (chunk, expected));
+
+                    if !stop_scheduling && let Some((next_read_idx, next_pos)) = positions.next() {
+                        reads.push(spawn_read(
+                            Arc::clone(&file),
+                            next_read_idx,
+                            next_pos,
+                            end,
+                            chunk_size,
+                            "stream read",
+                        ));
+                    }
+
+                    while let Some((chunk, expected)) = ready.remove(&next_idx) {
+                        next_idx += 1;
+                        if chunk.is_empty() {
+                            stop_scheduling = true;
+                            continue;
+                        }
+                        let actual = chunk.len();
+                        if !receiver_dropped {
+                            let mut to_send = Some(chunk);
+                            loop {
+                                tokio::select! {
+                                    biased;
+                                    permit = tx.reserve() => {
+                                        if let Ok(permit) = permit {
+                                            permit.send(to_send.take().expect("to_send initialized as Some above"));
+                                            *emitted_offset += actual as u64;
+                                        } else {
+                                            receiver_dropped = true;
+                                            stop_scheduling = true;
+                                        }
+                                        break;
+                                    }
+                                    drain = reads.next(), if !reads.is_empty() => {
+                                        match drain {
+                                            Some(Ok((didx, dc, de))) => {
+                                                ready.insert(didx, (dc, de));
+                                                if !stop_scheduling && ready.len() <= parallelism
+                                                    && let Some((nri, np)) = positions.next() {
+                                                        reads.push(spawn_read(
+                                                            Arc::clone(&file),
+                                                            nri,
+                                                            np,
+                                                            end,
+                                                            chunk_size,
+                                                            "stream read",
+                                                        ));
+                                                    }
+                                            }
+                                            Some(Err(err)) => {
+                                                if receiver_dropped {
+                                                    warn!(
+                                                        "stream_to drain after receiver drop failed: {}; closing idle SMB connection",
+                                                        err
+                                                    );
+                                                } else {
+                                                    error!("stream_to read: {}", err);
+                                                }
+                                                read_error = Some(err);
+                                                break;
+                                            }
+                                            None => {}
+                                        }
+                                    }
+                                }
+                            }
+                            if read_error.is_some() {
+                                break;
+                            }
+                        }
+                        if actual < expected {
+                            stop_scheduling = true;
+                        }
+                    }
+                    if read_error.is_some() {
+                        break;
+                    }
+
+                    // Refill the read pipeline if it was depleted during
+                    // sustained backpressure. Without this, the outer
+                    // `reads.next().await` would return None and the
+                    // stream would terminate prematurely.
+                    while reads.len() < parallelism && !stop_scheduling {
+                        if let Some((nri, np)) = positions.next() {
+                            reads.push(spawn_read(Arc::clone(&file), nri, np, end, chunk_size, "stream read"));
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                Err(err) => {
+                    if receiver_dropped {
+                        warn!(
+                            "stream_to drain after receiver drop failed: {}; closing idle SMB connection",
+                            err
+                        );
+                    } else {
+                        error!("stream_to read: {}", err);
+                    }
+                    read_error = Some(err);
+                    break;
+                }
+            }
+        }
+        // Drop in-flight reads first to release their Arc<File> references,
+        // then close the file explicitly.
+        drop(reads);
+        if let Ok(f) = Arc::try_unwrap(file) {
+            let _ = f.close().await;
+        }
+        if receiver_dropped && !read_error.as_ref().is_some_and(should_retry_smb) {
+            return Ok(());
+        }
+        match read_error {
+            Some(err) => Err(err),
+            None => Ok(()),
+        }
     }
 
     async fn read_bytes_with_state(
@@ -1147,97 +1424,8 @@ impl Meta for NativeSmbDriver {
     }
 
     async fn init(&self) -> Result<()> {
-        if self
-            .inner
-            .lock()
-            .unwrap_or_else(|e| {
-                tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
-                e.into_inner()
-            })
-            .is_some()
-        {
-            return Ok(());
-        }
-
-        let params = self.params.clone();
-        let unc_str = format!(r"\\{}\{}", params.host, params.share);
-        let base_unc = UncPath::from_str(&unc_str)
-            .map_err(|e| TokimoVfsError::InvalidConfig(format!("非法 SMB UNC 路径: {e}")))?;
-
-        let user_name = if params.username.is_empty() {
-            current_username().unwrap_or_else(|| "guest".to_string())
-        } else {
-            params.username.clone()
-        };
-
-        let effective_domain = effective_domain(&params.domain);
-        let qualified_user = if user_name.contains('\\') || user_name.contains('@') || effective_domain.is_empty() {
-            user_name.clone()
-        } else {
-            format!(r"{effective_domain}\{user_name}")
-        };
-        let password = if params.password.is_empty() {
-            read_ntlm_password_from_file(effective_domain, &params.host).unwrap_or_default()
-        } else {
-            params.password.clone()
-        };
-
-        let client = build_client();
-        client
-            .share_connect(&base_unc, &qualified_user, password.clone())
-            .await
-            .map_err(|err| TokimoVfsError::ConnectionError(format!("SMB connect failed: {err}")))?;
-
-        let root_unc = build_unc(&base_unc, &params.root_path, "");
-        client
-            .create_file(&root_unc, &open_dir_args())
-            .await
-            .map_err(|e| smb_err("open root", e))?;
-
-        let conn = client
-            .get_connection(base_unc.server())
-            .await
-            .map_err(|e| smb_err("get connection info", e))?;
-        let negotiated = conn
-            .conn_info()
-            .ok_or_else(|| TokimoVfsError::Other("smb get connection info: 未完成协商".into()))?;
-        let smb_version = smb_dialect_label(negotiated.negotiation.dialect_rev);
-        let (read_chunk_size, read_parallelism) = compute_read_window(negotiated.negotiation.max_read_size as usize);
-        let (stream_chunk_size, stream_parallelism) =
-            compute_stream_window(negotiated.negotiation.max_read_size as usize);
-        // Cap write chunks at the server's negotiated max_write_size (usually 1-8 MB).
-        let write_chunk_size = (negotiated.negotiation.max_write_size as usize).clamp(65536, SMB_MAX_READ_CHUNK);
-        info!(
-            host = %params.host,
-            share = %params.share,
-            smb_version,
-            dialect = ?negotiated.negotiation.dialect_rev,
-            max_read_size = negotiated.negotiation.max_read_size,
-            max_write_size = negotiated.negotiation.max_write_size,
-            write_chunk_size,
-            read_chunk_size,
-            read_parallelism,
-            stream_chunk_size,
-            stream_parallelism,
-            "SMB negotiated read/write window"
-        );
-
-        let state = Arc::new(SmbState {
-            client,
-            base_unc,
-            root_path: params.root_path,
-            read_chunk_size,
-            read_parallelism,
-            stream_chunk_size,
-            stream_parallelism,
-            write_chunk_size,
-            read_handles: ReadHandleCache::new(),
-        });
-        *self.inner.lock().unwrap_or_else(|e| {
-            tracing::warn!("mutex poisoned in NativeSmbDriver::init, recovering: {e}");
-            e.into_inner()
-        }) = Some(state);
-        Ok(())
+        let _guard = self.connection_lock.lock().await;
+        self.init_state().await
     }
 
     async fn drop_driver(&self) -> Result<()> {
@@ -1302,181 +1490,45 @@ impl Reader for NativeSmbDriver {
     }
 
     async fn stream_to(&self, path: &Path, offset: u64, limit: Option<u64>, tx: Sender<Vec<u8>>) {
-        let state = match self.ensure_state().await {
+        if limit == Some(0) {
+            return;
+        }
+        let mut state = match self.ensure_state().await {
             Ok(state) => state,
             Err(err) => {
                 error!("stream_to ensure state: {}", err);
                 return;
             }
         };
-        let file = match open_file_resource(&state, path).await {
-            Ok(file) => Arc::new(file),
-            Err(err) => {
-                error!("stream_to open file: {}", err);
-                return;
-            }
-        };
-        let end = match limit {
-            Some(0) => return,
-            Some(limit) => offset.saturating_add(limit),
-            None => {
-                let file_size = match file.query_info::<FileStandardInformation>().await {
-                    Ok(info) => info.end_of_file,
-                    Err(err) => {
-                        error!("stream_to query size: {}", smb_err("stream query size", err));
+        let end = limit.map(|limit| offset.saturating_add(limit));
+        let mut emitted_offset = offset;
+        for attempt in 0..=1 {
+            let remaining = end.map(|end| end.saturating_sub(emitted_offset));
+            match Self::stream_with_state(&state, path, &mut emitted_offset, remaining, &tx).await {
+                Ok(()) => return,
+                Err(err) if should_retry_smb(&err) => {
+                    self.clear_state(&state);
+                    if attempt == 1 || tx.is_closed() {
+                        error!("stream_to failed: {}", err);
                         return;
                     }
-                };
-
-                if offset >= file_size {
-                    return;
-                }
-
-                file_size
-            }
-        };
-        let chunk_size = state.stream_chunk_size;
-        // Cap parallelism for all stream_to calls. High parallelism (32)
-        // overwhelms SMB servers, causing read failures after ~85MB.
-        let parallelism = state.stream_parallelism.min(SMB_OPEN_ENDED_STREAM_PARALLELISM_CAP);
-        let mut positions = std::iter::successors(Some(offset), move |pos| {
-            let next = *pos + chunk_size as u64;
-            (next < end).then_some(next)
-        })
-        .enumerate();
-        let mut reads = FuturesUnordered::new();
-        let mut ready = BTreeMap::new();
-        let mut next_idx = 0usize;
-        let mut receiver_dropped = false;
-        let mut stop_scheduling = false;
-        let mut read_error = false;
-
-        for _ in 0..parallelism {
-            let Some((idx, pos)) = positions.next() else {
-                break;
-            };
-            reads.push(spawn_read(Arc::clone(&file), idx, pos, end, chunk_size, "stream read"));
-        }
-
-        while let Some(chunk_res) = reads.next().await {
-            match chunk_res {
-                Ok((idx, chunk, expected)) => {
-                    ready.insert(idx, (chunk, expected));
-
-                    if !stop_scheduling && let Some((next_read_idx, next_pos)) = positions.next() {
-                        reads.push(spawn_read(
-                            Arc::clone(&file),
-                            next_read_idx,
-                            next_pos,
-                            end,
-                            chunk_size,
-                            "stream read",
-                        ));
-                    }
-
-                    while let Some((chunk, expected)) = ready.remove(&next_idx) {
-                        next_idx += 1;
-                        if chunk.is_empty() {
-                            stop_scheduling = true;
-                            continue;
+                    warn!(
+                        offset = emitted_offset,
+                        "SMB stream failed, reconnecting and resuming once: {err}"
+                    );
+                    state = match self.reconnect_state(&state).await {
+                        Ok(state) => state,
+                        Err(err) => {
+                            error!("stream_to reconnect: {}", err);
+                            return;
                         }
-                        let actual = chunk.len();
-                        if !receiver_dropped {
-                            let mut to_send = Some(chunk);
-                            loop {
-                                tokio::select! {
-                                    biased;
-                                    permit = tx.reserve() => {
-                                        if let Ok(permit) = permit {
-                                            permit.send(to_send.take().expect("to_send initialized as Some above"));
-                                        } else {
-                                            receiver_dropped = true;
-                                            stop_scheduling = true;
-                                        }
-                                        break;
-                                    }
-                                    drain = reads.next(), if !reads.is_empty() => {
-                                        match drain {
-                                            Some(Ok((didx, dc, de))) => {
-                                                ready.insert(didx, (dc, de));
-                                                if !stop_scheduling && ready.len() <= parallelism
-                                                    && let Some((nri, np)) = positions.next() {
-                                                        reads.push(spawn_read(
-                                                            Arc::clone(&file),
-                                                            nri,
-                                                            np,
-                                                            end,
-                                                            chunk_size,
-                                                            "stream read",
-                                                        ));
-                                                    }
-                                            }
-                                            Some(Err(err)) => {
-                                                if receiver_dropped {
-                                                    warn!(
-                                                        "stream_to drain after receiver drop failed: {}; closing idle SMB connection",
-                                                        err
-                                                    );
-                                                } else {
-                                                    error!("stream_to read: {}", err);
-                                                }
-                                                read_error = true;
-                                                break;
-                                            }
-                                            None => {}
-                                        }
-                                    }
-                                }
-                            }
-                            if read_error {
-                                break;
-                            }
-                        }
-                        if actual < expected {
-                            stop_scheduling = true;
-                        }
-                    }
-                    if read_error {
-                        break;
-                    }
-
-                    // Refill the read pipeline if it was depleted during
-                    // sustained backpressure. Without this, the outer
-                    // `reads.next().await` would return None and the
-                    // stream would terminate prematurely.
-                    while reads.len() < parallelism && !stop_scheduling {
-                        if let Some((nri, np)) = positions.next() {
-                            reads.push(spawn_read(Arc::clone(&file), nri, np, end, chunk_size, "stream read"));
-                        } else {
-                            break;
-                        }
-                    }
+                    };
                 }
                 Err(err) => {
-                    if receiver_dropped {
-                        warn!(
-                            "stream_to drain after receiver drop failed: {}; closing idle SMB connection",
-                            err
-                        );
-                    } else {
-                        error!("stream_to read: {}", err);
-                    }
-                    read_error = true;
-                    break;
+                    error!("stream_to failed: {}", err);
+                    return;
                 }
             }
-        }
-        // Drop in-flight reads first to release their Arc<File> references,
-        // then close the file explicitly.
-        drop(reads);
-        if let Ok(f) = Arc::try_unwrap(file) {
-            let _ = f.close().await;
-        }
-        // On genuine read errors (not receiver drops), remove the stale state
-        // so the next operation reconnects. clear_state() does NOT close the
-        // old client — it stays alive until all Arc references are released.
-        if read_error && !receiver_dropped {
-            self.clear_state().await;
         }
     }
 }
@@ -1702,6 +1754,7 @@ impl SmbMultiShareDriver {
             params: p,
             caps,
             inner: Arc::new(Mutex::new(None)),
+            connection_lock: tokio::sync::Mutex::new(()),
             read_usage: Arc::new(Mutex::new(SmbReadUsage::default())),
         });
         map.insert(key, Arc::clone(&drv));

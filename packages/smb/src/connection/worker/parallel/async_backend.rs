@@ -28,7 +28,7 @@ impl AsyncBackend {
         loop {
             match self_ref.handle_next_recv(rtransport.as_mut(), &worker).await {
                 Ok(_) => {}
-                Err(Error::TransportError(TransportError::NotConnected)) => {
+                Err(Error::TransportError(TransportError::NotConnected | TransportError::IoError(_))) => {
                     tracing::error!("Connection was force-closed by the server.");
                     self_ref.token.cancel();
                     break;
@@ -44,10 +44,9 @@ impl AsyncBackend {
 
         // Cleanup
         tracing::debug!("Cleaning up worker loop.");
-        if let Ok(mut state) = worker.state.lock().await {
-            for (_, tx) in state.awaiting.drain() {
-                let _notify_result = tx.send(Err(Error::ConnectionStopped));
-            }
+        self_ref.token.cancel();
+        if let Err(err) = worker.mark_stopped().await {
+            tracing::error!("Failed to mark worker stopped: {err}");
         }
     }
 
@@ -65,7 +64,7 @@ impl AsyncBackend {
                 .await
             {
                 Ok(_) => {}
-                Err(Error::TransportError(TransportError::NotConnected)) => {
+                Err(Error::TransportError(TransportError::NotConnected | TransportError::IoError(_))) => {
                     tracing::error!("Connection was force-closed by the server.");
                     self_ref.token.cancel();
                     break;
@@ -80,6 +79,10 @@ impl AsyncBackend {
         }
 
         send_channel.close();
+        self_ref.token.cancel();
+        if let Err(err) = worker.mark_stopped().await {
+            tracing::error!("Failed to mark worker stopped: {err}");
+        }
     }
 
     /// Handles the next message in the receive loop:
@@ -94,9 +97,10 @@ impl AsyncBackend {
     ) -> crate::Result<()> {
         select! {
             // Receive a message from the server.
-            message_from_server = rtransport.receive() => {
+            result = async {
+                let message_from_server = rtransport.receive().await;
                 worker.incoming_data_callback(message_from_server).await
-            }
+            } => result,
             // Cancel the loop.
             _ = self.token.cancelled() => {
                 Err(Error::ConnectionStopped)
@@ -114,9 +118,10 @@ impl AsyncBackend {
     ) -> crate::Result<()> {
         select! {
             // Send a message to the server.
-            message_to_send = send_channel.recv() => {
-                worker.outgoing_data_callback(message_to_send, wtransport).await
-            },
+            result = async {
+                let message_to_send = send_channel.recv().await.ok_or(Error::ConnectionStopped)?;
+                worker.outgoing_data_callback(Some(message_to_send), wtransport).await
+            } => result,
             // Cancel the loop.
             _ = self.token.cancelled() => {
                 Err(Error::ConnectionStopped)
@@ -171,13 +176,11 @@ impl MultiWorkerBackend for AsyncBackend {
 
     async fn wait_on_waiter(waiter: Self::AwaitingWaiter, timeout: Duration) -> crate::Result<IncomingMessage> {
         if timeout == Duration::ZERO {
-            waiter
-                .await
-                .map_err(|_| Error::MessageProcessingError("Failed to receive message.".to_string()))?
+            waiter.await.map_err(|_| Error::ConnectionStopped)?
         } else {
             tokio::select! {
                 msg = waiter => {
-                    msg.map_err(|_| Error::MessageProcessingError("Failed to receive message.".to_string()))?
+                    msg.map_err(|_| Error::ConnectionStopped)?
                 },
                 _ = tokio::time::sleep(timeout) => {
                     Err(Error::OperationTimeout(TimedOutTask::ReceiveNextMessage, timeout))

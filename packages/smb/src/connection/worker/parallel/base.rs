@@ -90,6 +90,17 @@ where
         self.stopped.load(std::sync::atomic::Ordering::SeqCst)
     }
 
+    /// Mark the connection unusable and wake all pending receivers.
+    pub(crate) async fn mark_stopped(&self) -> crate::Result<()> {
+        self.stopped.store(true, Ordering::SeqCst);
+        let mut state = self.state.lock().await?;
+        for (_, tx) in state.awaiting.drain() {
+            let _ = T::send_notify(tx, Err(Error::ConnectionStopped));
+        }
+        state.pending.clear();
+        Ok(())
+    }
+
     /// This is a function that should be used by multi worker implementations (async/mtd),
     /// after gettting a messages from the server, this function processes it and
     /// notifies the awaiting tasks.
@@ -232,20 +243,20 @@ where
     }
 
     async fn stop(&self) -> crate::Result<()> {
-        self.stopped.store(true, std::sync::atomic::Ordering::SeqCst);
-        {
-            self.backend_impl
-                .lock()
-                .await?
-                .take()
-                .ok_or(Error::InvalidState("No backend present for worker.".to_string()))?
+        self.mark_stopped().await?;
+        // Release the backend lock before waiting for worker loops to exit.
+        let backend = self.backend_impl.lock().await?.take();
+        match backend {
+            Some(backend) => backend.stop().await,
+            None => Ok(()),
         }
-        .stop()
-        .await
     }
 
     async fn send(&self, msg: OutgoingMessage) -> crate::Result<SendMessageResult> {
         tracing::trace!("ParallelWorker::send({msg:?}) called");
+        if self.stopped() {
+            return Err(Error::ConnectionStopped);
+        }
         let return_raw_data = msg.return_raw_data;
 
         let id = msg.message.header.message_id;
@@ -257,10 +268,10 @@ where
 
         let message = T::wrap_msg_to_send(message);
 
-        self.sender
-            .send(message)
-            .await
-            .map_err(|_| Error::MessageProcessingError("Failed to send message to worker!".to_string()))?;
+        if self.sender.send(message).await.is_err() {
+            self.mark_stopped().await?;
+            return Err(Error::ConnectionStopped);
+        }
 
         Ok(SendMessageResult::new(id, raw_message_copy))
     }
