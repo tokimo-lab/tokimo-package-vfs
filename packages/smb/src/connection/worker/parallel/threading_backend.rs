@@ -30,10 +30,10 @@ impl ThreadingBackend {
         while !self.is_cancelled() {
             let next = rtransport.receive();
             // Handle polling fail
-            if let Err(TransportError::IoError(ref e)) = next {
-                if e.kind() == std::io::ErrorKind::WouldBlock {
-                    continue;
-                }
+            if let Err(TransportError::IoError(ref e)) = next
+                && e.kind() == std::io::ErrorKind::WouldBlock
+            {
+                continue;
             }
             match self.worker.incoming_data_callback(next) {
                 Ok(_) => {}
@@ -190,7 +190,7 @@ impl MultiWorkerBackend for ThreadingBackend {
         tx: Self::AwaitingNotifier,
         msg: crate::Result<IncomingMessage>,
     ) -> Result<(), crate::Result<IncomingMessage>> {
-        tx.send(msg)
+        tx.send(msg).map_err(|err| err.0)
     }
 
     fn make_send_channel_pair() -> (mpsc::Sender<Self::SendMessage>, mpsc::Receiver<Self::SendMessage>) {
